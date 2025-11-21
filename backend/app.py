@@ -1633,7 +1633,7 @@ def get_active_anomalies():
                     "video_timestamp": a.get('timestamp'),
                     "confidence": a.get('confidence', 80),
                     "status": "active",
-                    "imageUrl": "/placeholder.svg" # Placeholder for now
+                    "imageUrl": a.get('imageUrl', '/placeholder.svg')
                 })
             else:
                 active_anomalies.append({

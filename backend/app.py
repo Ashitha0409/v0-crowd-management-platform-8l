@@ -711,6 +711,226 @@ def analyze_video_with_gemini(video_path, zone_id):
         print(f"Gemini Analysis Error: {e}")
         return None
 
+def fast_continuous_video_processor(video_path, zone_id, stop_flag_dict):
+    """
+    Fast continuous processor using OpenCV for people detection
+    Only calls Gemini for anomaly detection when needed
+    Updates every 2-3 seconds for real-time dashboard
+    """
+    try:
+        import numpy as np
+        
+        # Initialize OpenCV people detector (HOG)
+        hog = cv2.HOGDescriptor()
+        hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+        
+        # Open video file
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            print(f"[{zone_id}] Failed to open video: {video_path}")
+            return
+        
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        frame_interval = int(fps * 2)  # Analyze every 2 seconds
+        
+        print(f"[{zone_id}] Starting FAST continuous analysis: {total_frames} frames @ {fps} FPS")
+        print(f"[{zone_id}] Analyzing every {frame_interval} frames (~2 seconds)")
+        
+        frame_count = 0
+        analysis_count = 0
+        last_gemini_call = 0
+        last_crowd_count = 0
+        
+        while not stop_flag_dict.get('stop', False):
+            ret, frame = cap.read()
+            
+            if not ret:
+                # Loop back to beginning
+                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                frame_count = 0
+                print(f"[{zone_id}] Looping video...")
+                continue
+            
+            frame_count += 1
+            
+            # Analyze frame at intervals
+            if frame_count % frame_interval == 0:
+                analysis_count += 1
+                timestamp_sec = frame_count / fps
+                timestamp_min = int(timestamp_sec // 60)
+                timestamp_sec_rem = int(timestamp_sec % 60)
+                
+                try:
+                    # Resize frame for faster processing
+                    resized = cv2.resize(frame, (640, 480))
+                    
+                    # Detect people using HOG
+                    boxes, weights = hog.detectMultiScale(resized, winStride=(8, 8), padding=(4, 4), scale=1.05)
+                    
+                    crowd_count = len(boxes)
+                    
+                    # Determine density level
+                    if crowd_count > 100:
+                        density_level = "Critical"
+                    elif crowd_count > 50:
+                        density_level = "High"
+                    elif crowd_count > 20:
+                        density_level = "Medium"
+                    else:
+                        density_level = "Low"
+                    
+                    # Determine sentiment based on crowd density
+                    if density_level == "Critical":
+                        sentiment = "Agitated"
+                    elif density_level == "High":
+                        sentiment = "Busy"
+                    else:
+                        sentiment = "Calm"
+                    
+                    # Create analysis object
+                    analysis = {
+                        'crowd_count': crowd_count,
+                        'density_level': density_level,
+                        'sentiment': sentiment,
+                        'description': f"Detected {crowd_count} people in the frame. Crowd density is {density_level.lower()}.",
+                        'anomalies': [],
+                        'timestamp': datetime.utcnow().isoformat() + "Z",
+                        'video_timestamp': f"{timestamp_min}:{timestamp_sec_rem:02d}",
+                        'detection_method': 'opencv_hog'
+                    }
+                    
+                    # Call Gemini for detailed analysis if significant change or every 30 seconds
+                    crowd_change = abs(crowd_count - last_crowd_count)
+                    time_since_gemini = analysis_count - last_gemini_call
+                    
+                    should_call_gemini = (
+                        crowd_change > 10 or  # Significant crowd change
+                        density_level in ["High", "Critical"] or  # High density
+                        time_since_gemini >= 15  # Every 30 seconds (15 * 2sec intervals)
+                    )
+                    
+                    if should_call_gemini:
+                        print(f"[{zone_id}] Calling Gemini for detailed analysis (change: {crowd_change}, density: {density_level})")
+                        
+                        # Save frame temporarily
+                        temp_filename = f"temp_{zone_id}_{int(time.time())}.jpg"
+                        temp_frame_path = os.path.join(app.config['UPLOAD_FOLDER'], temp_filename)
+                        cv2.imwrite(temp_frame_path, frame)
+                        
+                        # Get Gemini analysis in background (non-blocking)
+                        try:
+                            import google.generativeai as genai
+                            
+                            api_key = os.getenv("GEMINI_API_KEY")
+                            if not api_key:
+                                key_files = ["gemini_key.txt", "../gemini_key.txt", "backend/gemini_key.txt"]
+                                for kf in key_files:
+                                    if os.path.exists(kf):
+                                        try:
+                                            with open(kf, "r") as f:
+                                                possible_key = f.read().strip()
+                                            if possible_key and "PASTE" not in possible_key:
+                                                api_key = possible_key
+                                                break
+                                        except:
+                                            pass
+                            
+                            if api_key and "PASTE" not in api_key:
+                                genai.configure(api_key=api_key)
+                                model = genai.GenerativeModel('models/gemini-flash-latest')
+                                
+                                frame_file = genai.upload_file(path=temp_frame_path)
+                                
+                                # Wait for processing
+                                while frame_file.state.name == "PROCESSING":
+                                    time.sleep(1)
+                                    frame_file = genai.get_file(frame_file.name)
+                                
+                                if frame_file.state.name != "FAILED":
+                                    prompt = f"""
+                                    Analyze this CCTV frame for anomalies and crowd behavior.
+                                    Current OpenCV detection: {crowd_count} people, {density_level} density.
+                                    
+                                    Return JSON with:
+                                    - anomalies (list): Any detected anomalies with type, description, confidence
+                                    - sentiment (string): "Calm", "Agitated", "Panic", or "Happy"
+                                    - description (string): Brief scene summary
+                                    """
+                                    
+                                    response = model.generate_content([frame_file, prompt], request_options={"timeout": 30})
+                                    
+                                    # Parse response
+                                    text = response.text
+                                    match = re.search(r'```json\n(.*?)\n```', text, re.DOTALL)
+                                    if match:
+                                        json_str = match.group(1)
+                                    else:
+                                        json_str = text
+                                    
+                                    gemini_data = json.loads(json_str)
+                                    
+                                    # Merge Gemini data with OpenCV data
+                                    analysis['anomalies'] = gemini_data.get('anomalies', [])
+                                    analysis['sentiment'] = gemini_data.get('sentiment', sentiment)
+                                    analysis['description'] = gemini_data.get('description', analysis['description'])
+                                    analysis['detection_method'] = 'opencv_hog + gemini'
+                                    
+                                    last_gemini_call = analysis_count
+                                    
+                                    # If anomalies detected, save the frame permanently
+                                    if analysis['anomalies']:
+                                        # Create unique filename for the anomaly frame
+                                        anomaly_filename = f"anomaly_{zone_id}_{int(time.time())}_{uuid.uuid4().hex[:8]}.jpg"
+                                        anomaly_path = os.path.join(app.config['UPLOAD_FOLDER'], anomaly_filename)
+                                        
+                                        # Rename temp file to permanent file
+                                        if os.path.exists(temp_frame_path):
+                                            os.rename(temp_frame_path, anomaly_path)
+                                            print(f"[{zone_id}] Saved anomaly frame: {anomaly_filename}")
+                                            
+                                            # Add image URL to each anomaly
+                                            for anomaly in analysis['anomalies']:
+                                                anomaly['imageUrl'] = f"/uploads/{anomaly_filename}"
+                                                anomaly['timestamp'] = analysis['timestamp']
+                                                
+                                                if anomaly.get('confidence', 0) > 70:
+                                                    send_anomaly_alert(zone_id, anomaly.get('type', 'Unknown'), anomaly.get('description', 'No description'))
+                                    else:
+                                        # No anomalies, delete temp file
+                                        if os.path.exists(temp_frame_path):
+                                            os.remove(temp_frame_path)
+                                
+                                # Clean up if still exists (fallback)
+                                if os.path.exists(temp_frame_path):
+                                    os.remove(temp_frame_path)
+                        
+                        except Exception as e:
+                            print(f"[{zone_id}] Gemini call failed: {e}")
+                            if os.path.exists(temp_frame_path):
+                                os.remove(temp_frame_path)
+                    
+                    # Update global analysis
+                    ZONE_ANALYSIS[zone_id] = analysis
+                    update_zone_history(zone_id, analysis)
+                    
+                    last_crowd_count = crowd_count
+                    
+                    print(f"[{zone_id}] Analysis #{analysis_count}: {crowd_count} people, {density_level} density ({analysis.get('detection_method', 'opencv')})")
+                    
+                except Exception as e:
+                    print(f"[{zone_id}] Frame analysis error: {e}")
+            
+            # Small delay to prevent CPU overload
+            time.sleep(0.01)
+        
+        cap.release()
+        print(f"[{zone_id}] Fast continuous analysis stopped")
+        
+    except Exception as e:
+        print(f"[{zone_id}] Fast processor error: {e}")
+
+
 def continuous_video_processor(video_path, zone_id, stop_flag_dict):
     """
     Continuously process video frames and send analysis to dashboard
@@ -1011,7 +1231,7 @@ def upload_food_court_video():
             # Start new processor
             stop_flag = {'stop': False}
             thread = threading.Thread(
-                target=continuous_video_processor,
+                target=fast_continuous_video_processor,
                 args=(save_path, 'food_court', stop_flag),
                 daemon=True
             )
@@ -1076,7 +1296,7 @@ def upload_parking_video():
             if 'parking' in ACTIVE_VIDEO_PROCESSORS:
                 ACTIVE_VIDEO_PROCESSORS['parking']['stop_flag']['stop'] = True
             stop_flag = {'stop': False}
-            thread = threading.Thread(target=continuous_video_processor, args=(save_path, 'parking', stop_flag), daemon=True)
+            thread = threading.Thread(target=fast_continuous_video_processor, args=(save_path, 'parking', stop_flag), daemon=True)
             thread.start()
             ACTIVE_VIDEO_PROCESSORS['parking'] = {'thread': thread, 'stop_flag': stop_flag, 'video_path': save_path, 'started_at': datetime.utcnow().isoformat() + "Z"}
             print(f"[parking] Started continuous analysis for {filename}")
@@ -1131,7 +1351,7 @@ def upload_main_stage_video():
             if 'main_stage' in ACTIVE_VIDEO_PROCESSORS:
                 ACTIVE_VIDEO_PROCESSORS['main_stage']['stop_flag']['stop'] = True
             stop_flag = {'stop': False}
-            thread = threading.Thread(target=continuous_video_processor, args=(save_path, 'main_stage', stop_flag), daemon=True)
+            thread = threading.Thread(target=fast_continuous_video_processor, args=(save_path, 'main_stage', stop_flag), daemon=True)
             thread.start()
             ACTIVE_VIDEO_PROCESSORS['main_stage'] = {'thread': thread, 'stop_flag': stop_flag, 'video_path': save_path, 'started_at': datetime.utcnow().isoformat() + "Z"}
             print(f"[main_stage] Started continuous analysis for {filename}")
@@ -1186,7 +1406,7 @@ def upload_testing_video():
             if 'testing' in ACTIVE_VIDEO_PROCESSORS:
                 ACTIVE_VIDEO_PROCESSORS['testing']['stop_flag']['stop'] = True
             stop_flag = {'stop': False}
-            thread = threading.Thread(target=continuous_video_processor, args=(save_path, 'testing', stop_flag), daemon=True)
+            thread = threading.Thread(target=fast_continuous_video_processor, args=(save_path, 'testing', stop_flag), daemon=True)
             thread.start()
             ACTIVE_VIDEO_PROCESSORS['testing'] = {'thread': thread, 'stop_flag': stop_flag, 'video_path': save_path, 'started_at': datetime.utcnow().isoformat() + "Z"}
             print(f"[testing] Started continuous analysis for {filename}")

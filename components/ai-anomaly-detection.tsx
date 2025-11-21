@@ -286,20 +286,36 @@ export function AIAnomalyDetection({ context = "user" }: AIAnomalyDetectionProps
             </div>
             <div className="p-4">
               <div className="relative bg-black rounded-lg overflow-hidden">
-                <video
-                  ref={videoRef}
-                  src={getVideoSource(selectedAnomaly.cameraId)}
-                  controls
-                  autoPlay={isVideoPlaying}
-                  className="w-full h-auto max-h-[60vh]"
-                  onPlay={() => setIsVideoPlaying(true)}
-                  onPause={() => setIsVideoPlaying(false)}
-                >
-                  Your browser does not support the video tag.
-                </video>
-                <div className="absolute top-4 left-4 bg-black/70 text-white px-2 py-1 rounded text-sm">
-                  {selectedAnomaly.cameraId} - Live Feed
-                </div>
+                {selectedAnomaly.imageUrl && selectedAnomaly.imageUrl !== "/placeholder.svg" ? (
+                  <div className="relative">
+                    <img
+                      src={selectedAnomaly.imageUrl}
+                      alt="Anomaly Snapshot"
+                      className="w-full h-auto max-h-[60vh] object-contain"
+                    />
+                    <div className="absolute top-4 left-4 bg-destructive/90 text-white px-2 py-1 rounded text-sm font-medium flex items-center">
+                      <Camera className="h-3 w-3 mr-1" />
+                      Anomaly Snapshot
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <video
+                      ref={videoRef}
+                      src={getVideoSource(selectedAnomaly.cameraId)}
+                      controls
+                      autoPlay={isVideoPlaying}
+                      className="w-full h-auto max-h-[60vh]"
+                      onPlay={() => setIsVideoPlaying(true)}
+                      onPause={() => setIsVideoPlaying(false)}
+                    >
+                      Your browser does not support the video tag.
+                    </video>
+                    <div className="absolute top-4 left-4 bg-black/70 text-white px-2 py-1 rounded text-sm">
+                      {selectedAnomaly.cameraId} - Live Feed
+                    </div>
+                  </>
+                )}
               </div>
               <div className="mt-4 flex items-center justify-between">
                 <div className="flex items-center space-x-4">

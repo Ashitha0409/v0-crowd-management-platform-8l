@@ -53,6 +53,9 @@ import {
 } from "recharts"
 import { AIChatbot } from "@/components/ai-chatbot"
 import { AIAnomalyDetection } from "@/components/ai-anomaly-detection"
+import { RealtimeMonitoring } from "@/components/realtime-monitoring"
+import { LostAndFound } from "@/components/lost-and-found"
+import { ZoneSummary } from "@/components/zone-summary"
 import { toast } from "sonner"
 import {
   Dialog,
@@ -393,9 +396,11 @@ export default function AdminDashboard() {
           </Card>
         </div>
 
-        <Tabs defaultValue="overview" className="space-y-6">
+        <Tabs defaultValue="realtime" className="space-y-6">
           <div className="flex items-center justify-between">
-            <TabsList className="grid w-full max-w-md grid-cols-4">
+            <TabsList className="grid w-full max-w-3xl grid-cols-6">
+              <TabsTrigger value="realtime">Real-Time</TabsTrigger>
+              <TabsTrigger value="lost-found">Lost & Found</TabsTrigger>
               <TabsTrigger value="overview">Overview</TabsTrigger>
               <TabsTrigger value="zones">Zones</TabsTrigger>
               <TabsTrigger value="responders">Responders</TabsTrigger>
@@ -418,6 +423,19 @@ export default function AdminDashboard() {
               </Button>
             </div>
           </div>
+
+
+
+          {/* Real-Time Tab */}
+          <TabsContent value="realtime" className="space-y-6">
+            <ZoneSummary />
+            <RealtimeMonitoring />
+          </TabsContent>
+
+          {/* Lost & Found Tab */}
+          <TabsContent value="lost-found" className="space-y-6">
+            <LostAndFound userType="admin" />
+          </TabsContent>
 
           {/* Overview Tab */}
           <TabsContent value="overview" className="space-y-6">
@@ -815,116 +833,118 @@ export default function AdminDashboard() {
           </TabsContent>
         </Tabs>
 
-      </div>
+      </div >
 
       <AIChatbot context="admin" />
 
       {/* Zone Video Modal */}
-      {selectedZoneVideo && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-          <div className="bg-card rounded-lg max-w-4xl w-full max-h-[90vh] overflow-hidden">
-            <div className="flex items-center justify-between p-4 border-b">
-              <div>
-                <h3 className="text-lg font-semibold">{selectedZoneVideo.zone} - Live Feed</h3>
-                <p className="text-sm text-muted-foreground">
-                  Real-time monitoring • {new Date().toLocaleTimeString()}
-                </p>
-              </div>
-              <Button variant="ghost" size="sm" onClick={closeZoneVideoModal}>
-                <X className="h-4 w-4" />
-              </Button>
-            </div>
-            <div className="p-4">
-              <div className="relative bg-black rounded-lg overflow-hidden">
-                <video
-                  src={selectedZoneVideo.video}
-                  controls
-                  autoPlay={isZoneVideoPlaying}
-                  className="w-full h-auto max-h-[60vh]"
-                  onPlay={() => setIsZoneVideoPlaying(true)}
-                  onPause={() => setIsZoneVideoPlaying(false)}
-                >
-                  Your browser does not support the video tag.
-                </video>
-                <div className="absolute top-4 left-4 bg-black/70 text-white px-2 py-1 rounded text-sm">
-                  {selectedZoneVideo.zone} - Live Feed
+      {
+        selectedZoneVideo && (
+          <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+            <div className="bg-card rounded-lg max-w-4xl w-full max-h-[90vh] overflow-hidden">
+              <div className="flex items-center justify-between p-4 border-b">
+                <div>
+                  <h3 className="text-lg font-semibold">{selectedZoneVideo.zone} - Live Feed</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Real-time monitoring • {new Date().toLocaleTimeString()}
+                  </p>
                 </div>
+                <Button variant="ghost" size="sm" onClick={closeZoneVideoModal}>
+                  <X className="h-4 w-4" />
+                </Button>
               </div>
-              <div className="mt-4 flex items-center justify-between">
-                <div className="flex items-center space-x-4">
-                  <Badge variant="outline">
-                    Live Monitoring
-                  </Badge>
-                  <Badge variant="outline" className="bg-success/10 text-success border-success/20">
-                    Active
-                  </Badge>
+              <div className="p-4">
+                <div className="relative bg-black rounded-lg overflow-hidden">
+                  <video
+                    src={selectedZoneVideo.video}
+                    controls
+                    autoPlay={isZoneVideoPlaying}
+                    className="w-full h-auto max-h-[60vh]"
+                    onPlay={() => setIsZoneVideoPlaying(true)}
+                    onPause={() => setIsZoneVideoPlaying(false)}
+                  >
+                    Your browser does not support the video tag.
+                  </video>
+                  <div className="absolute top-4 left-4 bg-black/70 text-white px-2 py-1 rounded text-sm">
+                    {selectedZoneVideo.zone} - Live Feed
+                  </div>
                 </div>
-                <div className="flex items-center space-x-2">
-                  <Button variant="outline" size="sm" onClick={() => setIsZoneVideoPlaying(!isZoneVideoPlaying)}>
-                    {isZoneVideoPlaying ? <Pause className="h-4 w-4 mr-1" /> : <Play className="h-4 w-4 mr-1" />}
-                    {isZoneVideoPlaying ? "Pause" : "Play"}
-                  </Button>
-                  <Button size="sm">
-                    Dispatch Response Team
-                  </Button>
+                <div className="mt-4 flex items-center justify-between">
+                  <div className="flex items-center space-x-4">
+                    <Badge variant="outline">
+                      Live Monitoring
+                    </Badge>
+                    <Badge variant="outline" className="bg-success/10 text-success border-success/20">
+                      Active
+                    </Badge>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Button variant="outline" size="sm" onClick={() => setIsZoneVideoPlaying(!isZoneVideoPlaying)}>
+                      {isZoneVideoPlaying ? <Pause className="h-4 w-4 mr-1" /> : <Play className="h-4 w-4 mr-1" />}
+                      {isZoneVideoPlaying ? "Pause" : "Play"}
+                    </Button>
+                    <Button size="sm">
+                      Dispatch Response Team
+                    </Button>
+                  </div>
                 </div>
-              </div>
 
-              {/* Gemini Analysis Section */}
-              {zoneAnalysis && (
-                <div className="mt-4 p-4 bg-slate-50 rounded-lg border animate-in fade-in slide-in-from-bottom-4">
-                  <h4 className="font-semibold mb-3 flex items-center text-purple-700">
-                    <Sparkles className="h-4 w-4 mr-2" />
-                    Gemini AI Real-time Analysis
-                  </h4>
+                {/* Gemini Analysis Section */}
+                {zoneAnalysis && (
+                  <div className="mt-4 p-4 bg-slate-50 rounded-lg border animate-in fade-in slide-in-from-bottom-4">
+                    <h4 className="font-semibold mb-3 flex items-center text-purple-700">
+                      <Sparkles className="h-4 w-4 mr-2" />
+                      Gemini AI Real-time Analysis
+                    </h4>
 
-                  {zoneAnalysis.status === "no_data" ? (
-                    <div className="text-center py-6 border-2 border-dashed rounded-lg">
-                      <p className="text-muted-foreground font-medium mb-1">No Analysis Data Available</p>
-                      <p className="text-xs text-muted-foreground mb-4">Upload a video for this zone to generate AI insights.</p>
-                      <div className="text-xs bg-slate-100 p-2 rounded inline-block text-left">
-                        <code>POST /api/cameras/upload-video</code><br />
-                        <code>zone_id: {selectedZoneVideo.zone.toLowerCase().replace(/ /g, '_')}</code>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                      <div className="p-3 bg-white rounded border">
-                        <span className="text-muted-foreground block text-xs uppercase tracking-wider">Crowd Count</span>
-                        <span className="font-bold text-lg">{zoneAnalysis.people_count}</span>
-                      </div>
-                      <div className="p-3 bg-white rounded border">
-                        <span className="text-muted-foreground block text-xs uppercase tracking-wider">Density Level</span>
-                        <span className={`font-bold text-lg ${getZoneStatusColor(zoneAnalysis.density_level?.toLowerCase() || 'low')}`}>
-                          {zoneAnalysis.density_level}
-                        </span>
-                      </div>
-                      <div className="col-span-1 md:col-span-2 p-3 bg-white rounded border">
-                        <span className="text-muted-foreground block text-xs uppercase tracking-wider mb-1">Scene Description</span>
-                        <p className="text-slate-700 leading-relaxed">{zoneAnalysis.description}</p>
-                      </div>
-                      {zoneAnalysis.anomalies && zoneAnalysis.anomalies.length > 0 && (
-                        <div className="col-span-1 md:col-span-2 p-3 bg-red-50 rounded border border-red-100">
-                          <span className="text-red-600 font-semibold block text-xs uppercase tracking-wider mb-1">Detected Anomalies</span>
-                          <ul className="list-disc list-inside text-red-700 space-y-1">
-                            {zoneAnalysis.anomalies.map((a: string, i: number) => (
-                              <li key={i}>{a}</li>
-                            ))}
-                          </ul>
+                    {zoneAnalysis.status === "no_data" ? (
+                      <div className="text-center py-6 border-2 border-dashed rounded-lg">
+                        <p className="text-muted-foreground font-medium mb-1">No Analysis Data Available</p>
+                        <p className="text-xs text-muted-foreground mb-4">Upload a video for this zone to generate AI insights.</p>
+                        <div className="text-xs bg-slate-100 p-2 rounded inline-block text-left">
+                          <code>POST /api/cameras/upload-video</code><br />
+                          <code>zone_id: {selectedZoneVideo.zone.toLowerCase().replace(/ /g, '_')}</code>
                         </div>
-                      )}
-                      <div className="col-span-1 md:col-span-2 flex items-center justify-between text-xs text-muted-foreground mt-2">
-                        <span>Sentiment: {zoneAnalysis.sentiment}</span>
-                        <span>Last Updated: {new Date(zoneAnalysis.timestamp).toLocaleTimeString()}</span>
                       </div>
-                    </div>
-                  )}
-                </div>
-              )}
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                        <div className="p-3 bg-white rounded border">
+                          <span className="text-muted-foreground block text-xs uppercase tracking-wider">Crowd Count</span>
+                          <span className="font-bold text-lg">{zoneAnalysis.people_count}</span>
+                        </div>
+                        <div className="p-3 bg-white rounded border">
+                          <span className="text-muted-foreground block text-xs uppercase tracking-wider">Density Level</span>
+                          <span className={`font-bold text-lg ${getZoneStatusColor(zoneAnalysis.density_level?.toLowerCase() || 'low')}`}>
+                            {zoneAnalysis.density_level}
+                          </span>
+                        </div>
+                        <div className="col-span-1 md:col-span-2 p-3 bg-white rounded border">
+                          <span className="text-muted-foreground block text-xs uppercase tracking-wider mb-1">Scene Description</span>
+                          <p className="text-slate-700 leading-relaxed">{zoneAnalysis.description}</p>
+                        </div>
+                        {zoneAnalysis.anomalies && zoneAnalysis.anomalies.length > 0 && (
+                          <div className="col-span-1 md:col-span-2 p-3 bg-red-50 rounded border border-red-100">
+                            <span className="text-red-600 font-semibold block text-xs uppercase tracking-wider mb-1">Detected Anomalies</span>
+                            <ul className="list-disc list-inside text-red-700 space-y-1">
+                              {zoneAnalysis.anomalies.map((a: string, i: number) => (
+                                <li key={i}>{a}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        <div className="col-span-1 md:col-span-2 flex items-center justify-between text-xs text-muted-foreground mt-2">
+                          <span>Sentiment: {zoneAnalysis.sentiment}</span>
+                          <span>Last Updated: {new Date(zoneAnalysis.timestamp).toLocaleTimeString()}</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
-        </div>
-      )}
-    </div>
+        )
+      }
+    </div >
   )
 }

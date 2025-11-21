@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState } from "react"
+import React, { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -26,54 +26,93 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { AIChatbot } from "@/components/ai-chatbot"
 import { AIAnomalyDetection } from "@/components/ai-anomaly-detection"
 import { Navigation } from "@/components/navigation"
+import { LostAndFound } from "@/components/lost-and-found"
 
-// Mock data for demonstrations
-const mockCrowdData = [
-  { time: "10:00", density: 45, prediction: 52 },
-  { time: "10:15", density: 52, prediction: 58 },
-  { time: "10:30", density: 58, prediction: 65 },
-  { time: "10:45", density: 65, prediction: 72 },
-  { time: "11:00", density: 72, prediction: 78 },
-  { time: "11:15", density: 78, prediction: 85 },
-]
+// Data interfaces
+interface Zone {
+  id: string
+  name: string
+  density: number
+  status: string
+  prediction: number
+}
 
-const mockZones = [
-  { id: "main-stage", name: "Main Stage", density: 85, status: "high", prediction: 92 },
-  { id: "food-court", name: "Food Court", density: 72, status: "medium", prediction: 68 },
-  { id: "entrance-a", name: "Entrance A", density: 45, status: "low", prediction: 48 },
-  { id: "vip-area", name: "VIP Area", density: 28, status: "low", prediction: 32 },
-  { id: "parking", name: "Parking Lot", density: 60, status: "medium", prediction: 55 },
-]
+interface AlertItem {
+  id: string | number
+  type: string
+  severity: string
+  message: string
+  time: string
+  zone: string
+}
 
-const mockAlerts = [
-  {
-    id: 1,
-    type: "crowd",
-    severity: "high",
-    message: "High crowd density detected at Main Stage",
-    time: "2 minutes ago",
-    zone: "Main Stage",
-  },
-  {
-    id: 2,
-    type: "anomaly",
-    severity: "medium",
-    message: "Unusual movement pattern detected",
-    time: "5 minutes ago",
-    zone: "Food Court",
-  },
-  {
-    id: 3,
-    type: "prediction",
-    severity: "low",
-    message: "Crowd surge predicted in 10 minutes",
-    time: "8 minutes ago",
-    zone: "Entrance A",
-  },
-]
 
 export default function UserDashboard() {
-  const [selectedZone, setSelectedZone] = useState("main-stage")
+  // State for dashboard data
+  const [zones, setZones] = useState<Zone[]>([])
+  const [alerts, setAlerts] = useState<AlertItem[]>([])
+  const [crowdData, setCrowdData] = useState<any[]>([])
+  const [selectedZone, setSelectedZone] = useState<string | null>(null)
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        // Fetch zones
+        const resZones = await fetch('http://localhost:5000/api/realtime/all-zones')
+        if (resZones.ok) {
+          const data = await resZones.json()
+
+          const formattedZones: Zone[] = (data.zones || []).map((z: any) => ({
+            id: z.zone_id,
+            name: z.zone_name || z.zone_id,
+            density: z.current_analysis?.crowd_count || 0,
+            status: z.current_analysis?.density_level?.toLowerCase() || 'low',
+            prediction: 0
+          }))
+
+          if (!selectedZone && formattedZones.length > 0) {
+            setSelectedZone(formattedZones[0].id)
+          }
+
+          // Fetch predictions
+          for (const zone of formattedZones) {
+            try {
+              const resPred = await fetch(`http://localhost:5000/api/crowd/prediction/${zone.id}`)
+              if (resPred.ok) {
+                const predData = await resPred.json()
+                zone.prediction = predData.predicted_count_15min
+                // If selected zone, update chart data
+                if (zone.id === selectedZone) {
+                  setCrowdData(predData.history || [])
+                }
+              }
+            } catch (e) { console.error(e) }
+          }
+          setZones(formattedZones)
+        }
+
+        // Fetch alerts
+        const resAlerts = await fetch('http://localhost:5000/api/anomalies/active')
+        if (resAlerts.ok) {
+          const data = await resAlerts.json()
+          setAlerts(data.map((a: any) => ({
+            id: a.id,
+            type: a.type,
+            severity: a.confidence > 80 ? 'high' : 'medium',
+            message: a.description,
+            time: new Date(a.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            zone: a.location
+          })))
+        }
+      } catch (error) {
+        console.error("Error fetching dashboard data:", error)
+      }
+    }
+
+    fetchData()
+    const interval = setInterval(fetchData, 5000)
+    return () => clearInterval(interval)
+  }, [selectedZone])
   const [lostPersonForm, setLostPersonForm] = useState({
     name: "",
     description: "",
@@ -147,7 +186,8 @@ export default function UserDashboard() {
           <div className="lg:col-span-3 space-y-6">
             {/* Real-time Alerts */}
             <div className="space-y-3">
-              {mockAlerts.map((alert) => (
+              {alerts.length === 0 && <p className="text-muted-foreground text-sm">No active alerts.</p>}
+              {alerts.map((alert) => (
                 <Alert key={alert.id} className={alert.severity === "high" ? "border-destructive" : ""}>
                   <AlertTriangle className="h-4 w-4" />
                   <AlertDescription className="flex items-center justify-between">
@@ -179,14 +219,13 @@ export default function UserDashboard() {
                     <CardDescription>Interactive crowd density visualization by zone</CardDescription>
                   </CardHeader>
                   <CardContent>
-                    {/* Mock Heat Map Visualization */}
+                    {/* Mock Heat Map Visualization -> Real Data */}
                     <div className="grid grid-cols-3 gap-4 mb-6">
-                      {mockZones.map((zone) => (
+                      {zones.map((zone) => (
                         <Card
                           key={zone.id}
-                          className={`cursor-pointer transition-all hover:shadow-md ${
-                            selectedZone === zone.id ? "ring-2 ring-primary" : ""
-                          }`}
+                          className={`cursor-pointer transition-all hover:shadow-md ${selectedZone === zone.id ? "ring-2 ring-primary" : ""
+                            }`}
                           onClick={() => setSelectedZone(zone.id)}
                         >
                           <CardContent className="p-4">
@@ -210,12 +249,11 @@ export default function UserDashboard() {
                       ))}
                     </div>
 
-                    {/* Selected Zone Details */}
                     {selectedZone && (
                       <Card className="bg-muted/30">
                         <CardHeader>
                           <CardTitle className="text-lg">
-                            {mockZones.find((z) => z.id === selectedZone)?.name} - Detailed View
+                            {zones.find((z) => z.id === selectedZone)?.name} - Detailed View
                           </CardTitle>
                         </CardHeader>
                         <CardContent>
@@ -223,7 +261,7 @@ export default function UserDashboard() {
                             <div>
                               <h4 className="font-medium mb-3">Crowd Density Trend</h4>
                               <ResponsiveContainer width="100%" height={200}>
-                                <AreaChart data={mockCrowdData}>
+                                <AreaChart data={crowdData}>
                                   <CartesianGrid strokeDasharray="3 3" />
                                   <XAxis dataKey="time" />
                                   <YAxis />
@@ -244,7 +282,7 @@ export default function UserDashboard() {
                                 <div className="flex justify-between">
                                   <span className="text-muted-foreground">Current Capacity</span>
                                   <span className="font-medium">
-                                    {mockZones.find((z) => z.id === selectedZone)?.density}%
+                                    {zones.find((z) => z.id === selectedZone)?.density}
                                   </span>
                                 </div>
                                 <div className="flex justify-between">
@@ -282,7 +320,7 @@ export default function UserDashboard() {
                   <CardContent>
                     <div className="space-y-6">
                       <ResponsiveContainer width="100%" height={300}>
-                        <LineChart data={mockCrowdData}>
+                        <LineChart data={crowdData}>
                           <CartesianGrid strokeDasharray="3 3" />
                           <XAxis dataKey="time" />
                           <YAxis />
@@ -346,137 +384,7 @@ export default function UserDashboard() {
 
               {/* Lost & Found Tab */}
               <TabsContent value="lost-found" className="space-y-6">
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center space-x-2">
-                      <Search className="h-5 w-5" />
-                      <span>Lost Person Search</span>
-                    </CardTitle>
-                    <CardDescription>
-                      Upload a photo and description to search across all CCTV cameras using AI
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="grid md:grid-cols-2 gap-6">
-                      <div className="space-y-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="personName">Person's Name</Label>
-                          <Input
-                            id="personName"
-                            placeholder="Enter the person's name"
-                            value={lostPersonForm.name}
-                            onChange={(e) => setLostPersonForm({ ...lostPersonForm, name: e.target.value })}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="description">Description</Label>
-                          <Textarea
-                            id="description"
-                            placeholder="Describe clothing, appearance, distinctive features..."
-                            value={lostPersonForm.description}
-                            onChange={(e) => setLostPersonForm({ ...lostPersonForm, description: e.target.value })}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="lastSeen">Last Seen Location</Label>
-                          <Input
-                            id="lastSeen"
-                            placeholder="Where were they last seen?"
-                            value={lostPersonForm.lastSeen}
-                            onChange={(e) => setLostPersonForm({ ...lostPersonForm, lastSeen: e.target.value })}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="contact">Contact Information</Label>
-                          <Input
-                            id="contact"
-                            placeholder="Your phone number"
-                            value={lostPersonForm.contact}
-                            onChange={(e) => setLostPersonForm({ ...lostPersonForm, contact: e.target.value })}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="photo">Upload Photo</Label>
-                          <div className="border-2 border-dashed border-border rounded-lg p-6 text-center">
-                            <Upload className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-                            <p className="text-sm text-muted-foreground mb-2">
-                              Click to upload or drag and drop a clear photo
-                            </p>
-                            <Input
-                              id="photo"
-                              type="file"
-                              accept="image/*"
-                              className="hidden"
-                              onChange={(e) =>
-                                setLostPersonForm({ ...lostPersonForm, image: e.target.files?.[0] || null })
-                              }
-                            />
-                            <Button
-                              variant="outline"
-                              onClick={() => document.getElementById("photo")?.click()}
-                              className="bg-transparent"
-                            >
-                              Choose File
-                            </Button>
-                          </div>
-                        </div>
-                        <Button
-                          onClick={handleLostPersonSearch}
-                          disabled={isSearching || !lostPersonForm.name || !lostPersonForm.description}
-                          className="w-full"
-                        >
-                          {isSearching ? "Searching..." : "Search CCTV Cameras"}
-                        </Button>
-                      </div>
-
-                      <div className="space-y-4">
-                        <h3 className="font-medium">Search Results</h3>
-                        {isSearching && (
-                          <div className="text-center py-8">
-                            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
-                            <p className="text-muted-foreground">Analyzing CCTV footage...</p>
-                          </div>
-                        )}
-                        {searchResults.length > 0 && (
-                          <div className="space-y-3">
-                            {searchResults.map((result) => (
-                              <Card key={result.id} className="border-success/20">
-                                <CardContent className="p-4">
-                                  <div className="flex items-start space-x-3">
-                                    <img
-                                      src={result.image || "/placeholder.svg"}
-                                      alt="Found person"
-                                      className="w-16 h-16 rounded-lg object-cover"
-                                    />
-                                    <div className="flex-1">
-                                      <div className="flex items-center justify-between mb-1">
-                                        <Badge className="bg-success/10 text-success border-success/20">
-                                          {result.confidence}% Match
-                                        </Badge>
-                                        <span className="text-sm text-muted-foreground">{result.timestamp}</span>
-                                      </div>
-                                      <p className="font-medium text-sm">{result.location}</p>
-                                      <Button size="sm" className="mt-2">
-                                        <Camera className="h-3 w-3 mr-1" />
-                                        View Live Feed
-                                      </Button>
-                                    </div>
-                                  </div>
-                                </CardContent>
-                              </Card>
-                            ))}
-                          </div>
-                        )}
-                        {!isSearching && searchResults.length === 0 && (
-                          <div className="text-center py-8 text-muted-foreground">
-                            <Search className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                            <p>No search results yet. Fill out the form and click search to begin.</p>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
+                <LostAndFound userType="user" />
               </TabsContent>
             </Tabs>
 
@@ -518,8 +426,8 @@ export default function UserDashboard() {
                   <AlertTriangle className="h-4 w-4 mr-2" />
                   Report Incident
                 </Button>
-                <Button 
-                  variant="outline" 
+                <Button
+                  variant="outline"
                   className="w-full justify-start bg-transparent"
                   onClick={() => window.open('tel:9886744362', '_self')}
                 >

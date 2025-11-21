@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState } from "react"
+import React, { useState, useEffect } from "react"
 import { useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -24,104 +24,22 @@ import {
   ShieldCheck,
   Timer,
   Route,
+  Volume2,
+  VolumeX,
 } from "lucide-react"
 import { AIChatbot } from "@/components/ai-chatbot"
 import { Navigation } from "@/components/navigation"
+import dynamic from "next/dynamic"
+import { toast } from "sonner"
+import { useVoiceNavigation } from "@/hooks/use-voice-navigation"
 
-const mockIncidents = {
-  medical: [
-    {
-      id: "MED-001",
-      type: "Medical Emergency",
-      severity: "high",
-      status: "active",
-      location: "Main Stage - Section A",
-      zone: "main-stage",
-      description: "Person collapsed, unconscious",
-      reportedBy: "Security Team",
-      timeReported: "11:23 AM",
-      estimatedTime: "3 min",
-      distance: "0.2 km",
-      assignedTo: null,
-    },
-    {
-      id: "MED-002",
-      type: "Minor Injury",
-      severity: "medium",
-      status: "claimed",
-      location: "Food Court - Vendor 3",
-      zone: "food-court",
-      description: "Cut on hand from broken glass",
-      reportedBy: "Vendor Staff",
-      timeReported: "11:15 AM",
-      estimatedTime: "5 min",
-      distance: "0.4 km",
-      assignedTo: "Dr. Sarah Johnson",
-    },
-  ],
-  security: [
-    {
-      id: "SEC-001",
-      type: "Crowd Control",
-      severity: "high",
-      status: "active",
-      location: "Entrance Gate B",
-      zone: "entrance-b",
-      description: "Large crowd gathering, potential bottleneck",
-      reportedBy: "AI System",
-      timeReported: "11:20 AM",
-      estimatedTime: "2 min",
-      distance: "0.1 km",
-      assignedTo: null,
-    },
-    {
-      id: "SEC-002",
-      type: "Suspicious Activity",
-      severity: "medium",
-      status: "investigating",
-      location: "Parking Lot C",
-      zone: "parking-c",
-      description: "Unattended bag reported",
-      reportedBy: "Event Attendee",
-      timeReported: "11:10 AM",
-      estimatedTime: "8 min",
-      distance: "0.6 km",
-      assignedTo: "Officer Mike Chen",
-    },
-  ],
-  fire: [
-    {
-      id: "FIRE-001",
-      type: "Fire Hazard",
-      severity: "high",
-      status: "active",
-      location: "Backstage Area",
-      zone: "backstage",
-      description: "Electrical equipment overheating",
-      reportedBy: "Stage Crew",
-      timeReported: "11:25 AM",
-      estimatedTime: "4 min",
-      distance: "0.3 km",
-      assignedTo: null,
-    },
-  ],
-  technical: [
-    {
-      id: "TECH-001",
-      type: "System Failure",
-      severity: "medium",
-      status: "active",
-      location: "Control Room",
-      zone: "control-room",
-      description: "CCTV Camera 7 offline",
-      reportedBy: "System Monitor",
-      timeReported: "11:18 AM",
-      estimatedTime: "6 min",
-      distance: "0.5 km",
-      assignedTo: null,
-    },
-  ],
-}
+// Dynamically import VenueMap to avoid SSR issues with Leaflet
+const VenueMap = dynamic(() => import("@/components/venue-map-leaflet"), {
+  ssr: false,
+  loading: () => <div className="w-full h-[400px] bg-slate-100 flex items-center justify-center">Loading Map...</div>
+})
+
+const mockIncidents: any = {} // Deprecated, using real data
 
 const responderTypes = {
   medical: { name: "Medical Responder", icon: Heart, color: "text-red-500" },
@@ -135,14 +53,66 @@ export default function ResponderDashboard() {
   const responderType = (searchParams.get("type") as keyof typeof mockIncidents) || "medical"
   const [selectedIncident, setSelectedIncident] = useState<string | null>(null)
   const [responderStatus, setResponderStatus] = useState("available")
-  const [currentLocation, setCurrentLocation] = useState("Base Station")
+  const [currentLocationName, setCurrentLocationName] = useState("Entrance") // For display
+  const [currentLocationCoords, setCurrentLocationCoords] = useState<[number, number]>([12.9716, 77.5946]) // Default Entrance coords
   const [updateForm, setUpdateForm] = useState({
     status: "",
     notes: "",
     evidence: null as File | null,
   })
 
-  const incidents = mockIncidents[responderType] || []
+  // Navigation State
+  const [isNavigating, setIsNavigating] = useState(false)
+  const [navigationPath, setNavigationPath] = useState<[number, number][]>([])
+  const [avoidZones, setAvoidZones] = useState<{ lat: number; lng: number; radius: number }[]>([])
+  const [instructions, setInstructions] = useState<string[]>([])
+  const [targetLocationName, setTargetLocationName] = useState("")
+  const [targetLocationCoords, setTargetLocationCoords] = useState<[number, number] | undefined>(undefined)
+  const [enableGPSTracking, setEnableGPSTracking] = useState(false)
+  const [distanceToTarget, setDistanceToTarget] = useState<number>(0)
+  const [estimatedTime, setEstimatedTime] = useState<string>("")
+  const [currentStepIndex, setCurrentStepIndex] = useState(0)
+  const [voiceInstructions, setVoiceInstructions] = useState<string[]>([])
+
+  // Voice Navigation
+  const { speak, stop, toggle, isSpeaking, isEnabled: isVoiceEnabled, setIsEnabled: setVoiceEnabled } = useVoiceNavigation()
+
+  const [incidents, setIncidents] = useState<any[]>([])
+  const [messageText, setMessageText] = useState("")
+
+  const fetchIncidents = async () => {
+    try {
+      const res = await fetch('http://localhost:5000/api/anomalies/active')
+      if (res.ok) {
+        const data = await res.json()
+        const formatted = data.map((a: any) => ({
+          id: a.id,
+          type: a.type,
+          severity: a.confidence > 80 ? "high" : "medium",
+          status: a.status,
+          location: a.location,
+          zone: a.location.toLowerCase().replace(/ /g, '-'),
+          description: a.description,
+          reportedBy: "AI System",
+          timeReported: new Date(a.timestamp || Date.now()).toLocaleTimeString(),
+          estimatedTime: "Unknown",
+          distance: "Unknown",
+          assignedTo: null
+        }))
+        setIncidents(formatted)
+      }
+    } catch (e) {
+      console.error("Failed to fetch incidents", e)
+    }
+  }
+
+  useEffect(() => {
+    fetchIncidents()
+    const interval = setInterval(fetchIncidents, 5000)
+    return () => clearInterval(interval)
+  }, [])
+
+  // const incidents = mockIncidents[responderType] || [] // Replaced by state
   const ResponderIcon = responderTypes[responderType]?.icon || Activity
   const responderColor = responderTypes[responderType]?.color || "text-primary"
 
@@ -174,15 +144,156 @@ export default function ResponderDashboard() {
     }
   }
 
+  // Calculate distance between two coordinates (Haversine formula)
+  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    const R = 6371 // Earth's radius in km
+    const dLat = (lat2 - lat1) * Math.PI / 180
+    const dLon = (lon2 - lon1) * Math.PI / 180
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2)
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+    return R * c // Distance in km
+  }
+
+  // Update distance and ETA when location changes
+  const handleLocationUpdate = (newLocation: [number, number]) => {
+    setCurrentLocationCoords(newLocation)
+
+    if (targetLocationCoords && isNavigating) {
+      const distance = calculateDistance(
+        newLocation[0], newLocation[1],
+        targetLocationCoords[0], targetLocationCoords[1]
+      )
+      setDistanceToTarget(distance)
+
+      // Calculate ETA (assuming average walking speed of 5 km/h)
+      const timeInHours = distance / 5
+      const timeInMinutes = Math.round(timeInHours * 60)
+      setEstimatedTime(timeInMinutes < 1 ? "< 1 min" : `${timeInMinutes} min`)
+
+      // Check if arrived (within 20 meters)
+      if (distance < 0.02) {
+        toast.success("You have arrived at the incident location!")
+        setIsNavigating(false)
+        setEnableGPSTracking(false)
+      }
+    }
+  }
+
   const handleClaimIncident = (incidentId: string) => {
     setSelectedIncident(incidentId)
     setResponderStatus("responding")
+    toast.success("Incident claimed. Status updated to Responding.")
+  }
+
+  const handleAcceptAndNavigate = async (incident: any) => {
+    handleClaimIncident(incident.id)
+    setIsNavigating(true)
+
+    const targetName = incident.zone === "main-stage" ? "Main Stage" :
+      incident.zone === "food-court" ? "Food Court" :
+        incident.zone === "entrance-b" ? "Entrance" :
+          incident.zone === "parking-c" ? "Parking" :
+            incident.zone === "backstage" ? "Backstage" :
+              incident.zone === "control-room" ? "Control Room" : "Main Stage"
+
+    setTargetLocationName(targetName)
+
+    try {
+      // Mock fetching avoid zones (high density)
+      // In real app, fetch from /api/zones/density
+      const mockAvoid = ["Food Court"]
+
+      // Coordinates for Food Court (mock) - increased radius for visibility
+      const avoidZonesList = [{ lat: 12.9780, lng: 77.5980, radius: 200 }]
+      setAvoidZones(avoidZonesList)
+
+      console.log("🗺️ Navigation Request:", {
+        start: currentLocationName,
+        end: targetName,
+        avoid: mockAvoid
+      })
+
+      const response = await fetch('http://localhost:5000/api/path/calculate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          start: currentLocationName,
+          end: targetName,
+          avoid: mockAvoid
+        })
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+
+        console.log("📍 Backend Response:", data)
+
+        // Updated coordinates matching backend (spread across ~3km)
+        const NODE_COORDS: Record<string, [number, number]> = {
+          "Entrance": [12.9716, 77.5946],
+          "Security Gate": [12.9750, 77.5970],
+          "Main Stage": [12.9850, 77.6050],
+          "Food Court": [12.9780, 77.5980], // Avoid zone
+          "Parking": [12.9650, 77.5900],
+          "Medical Bay": [12.9800, 77.6000],
+          "Backstage": [12.9920, 77.6100],
+          "VIP Area": [12.9880, 77.6070],
+          "Control Room": [12.9950, 77.6120]
+        }
+
+        const pathCoords = data.path_nodes.map((node: string) => NODE_COORDS[node] || [12.9716, 77.5946])
+
+        console.log("🛣️ Path Nodes:", data.path_nodes)
+        console.log("📌 Path Coordinates:", pathCoords)
+        console.log("🔴 Avoid Zones:", avoidZonesList)
+
+        setNavigationPath(pathCoords)
+        setTargetLocationCoords(NODE_COORDS[targetName])
+        setInstructions(data.instructions)
+
+        // Enable voice FIRST and speak immediately
+        if (data.voice_instructions && data.voice_instructions.length > 0) {
+          setVoiceInstructions(data.voice_instructions)
+          setVoiceEnabled(true)
+          // Speak immediately (reduced delay)
+          setTimeout(() => {
+            speak(data.voice_instructions[0])
+            console.log("🔊 Speaking:", data.voice_instructions[0])
+          }, 300)
+        }
+
+        // Enable GPS tracking
+        setEnableGPSTracking(true)
+
+        // Calculate initial distance
+        const initialDistance = calculateDistance(
+          currentLocationCoords[0], currentLocationCoords[1],
+          NODE_COORDS[targetName][0], NODE_COORDS[targetName][1]
+        )
+        setDistanceToTarget(initialDistance)
+        const timeInMinutes = Math.round((initialDistance / 5) * 60)
+        setEstimatedTime(timeInMinutes < 1 ? "< 1 min" : `${timeInMinutes} min`)
+
+        toast.success("Route calculated. GPS & Voice navigation enabled.", {
+          description: "Please allow location access if prompted by your browser."
+        })
+      } else {
+        toast.error("Failed to calculate path.")
+      }
+    } catch (error) {
+      console.error("Navigation error:", error)
+      toast.error("Navigation service unreachable.")
+    }
   }
 
   const handleUpdateIncident = () => {
     // Mock update - in real app, send to backend
     console.log("Updating incident:", selectedIncident, updateForm)
     setUpdateForm({ status: "", notes: "", evidence: null })
+    toast.success("Incident report updated.")
   }
 
   return (
@@ -196,6 +307,153 @@ export default function ResponderDashboard() {
       />
 
       <div className="container mx-auto px-4 py-6">
+        {/* Navigation Overlay/Modal */}
+        {isNavigating && (
+          <Card className="mb-6 border-primary border-2 shadow-lg">
+            <CardHeader>
+              <CardTitle className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <NavigationIcon className="h-5 w-5 text-primary animate-pulse" />
+                  <span>Active Navigation</span>
+                  {enableGPSTracking && (
+                    <Badge variant="outline" className="bg-green-500/10 text-green-600 border-green-500/20">
+                      📍 GPS Active
+                    </Badge>
+                  )}
+                  {isVoiceEnabled && (
+                    <Badge variant="outline" className="bg-blue-500/10 text-blue-600 border-blue-500/20">
+                      {isSpeaking ? "🔊 Speaking" : "🎙️ Voice On"}
+                    </Badge>
+                  )}
+                </div>
+                <Button variant="ghost" size="sm" onClick={() => {
+                  setIsNavigating(false)
+                  setEnableGPSTracking(false)
+                  stop()
+                }}>Close Map</Button>
+              </CardTitle>
+              <CardDescription className="flex items-center justify-between">
+                <span>Optimized route to {targetLocationName} avoiding crowd congestion</span>
+                <div className="flex items-center space-x-4 text-sm font-medium">
+                  <div className="flex items-center space-x-1">
+                    <span className="text-muted-foreground">Distance:</span>
+                    <span className="text-primary">{(distanceToTarget * 1000).toFixed(0)}m</span>
+                  </div>
+                  <div className="flex items-center space-x-1">
+                    <span className="text-muted-foreground">ETA:</span>
+                    <span className="text-primary">{estimatedTime}</span>
+                  </div>
+                </div>
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid md:grid-cols-3 gap-6">
+                <div className="md:col-span-2 h-[400px]">
+                  <VenueMap
+                    key={`map-${targetLocationName}-${isNavigating}`}
+                    path={navigationPath}
+                    currentLocation={currentLocationCoords}
+                    targetLocation={targetLocationCoords}
+                    avoidZones={avoidZones}
+                    enableTracking={enableGPSTracking}
+                    onLocationUpdate={handleLocationUpdate}
+                  />
+                </div>
+                <div className="space-y-4">
+                  <div className="bg-primary/10 p-3 rounded-lg border border-primary/20">
+                    <h4 className="font-semibold flex items-center text-primary mb-2">
+                      <Route className="h-4 w-4 mr-2" /> Navigation Info
+                    </h4>
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Distance:</span>
+                        <span className="font-medium">{(distanceToTarget * 1000).toFixed(0)} meters</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">ETA:</span>
+                        <span className="font-medium">{estimatedTime}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">GPS:</span>
+                        <span className={`font-medium ${enableGPSTracking ? 'text-green-600' : 'text-gray-400'}`}>
+                          {enableGPSTracking ? '✓ Active' : '✗ Inactive'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4 className="font-semibold flex items-center mb-2">
+                      <Route className="h-4 w-4 mr-2" /> Turn-by-Turn
+                    </h4>
+                    <div className="space-y-2 max-h-[200px] overflow-y-auto">
+                      {instructions.map((instruction, index) => (
+                        <div
+                          key={index}
+                          className={`flex items-start space-x-2 p-2 rounded transition-all ${index === currentStepIndex
+                            ? 'bg-primary/20 border border-primary'
+                            : 'bg-muted/50'
+                            }`}
+                        >
+                          <Badge
+                            variant={index === currentStepIndex ? "default" : "outline"}
+                            className="mt-0.5"
+                          >
+                            {index + 1}
+                          </Badge>
+                          <span className="text-sm">{instruction}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="pt-4 space-y-2">
+                    <Button
+                      className="w-full"
+                      onClick={() => {
+                        if (targetLocationCoords) {
+                          setCurrentLocationCoords(targetLocationCoords)
+                          setCurrentLocationName(targetLocationName)
+                        }
+                        setIsNavigating(false)
+                        setEnableGPSTracking(false)
+                        stop()
+                        toast.success("Arrived at location.")
+                      }}
+                    >
+                      ✓ Mark as Arrived
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="w-full"
+                      onClick={() => {
+                        setEnableGPSTracking(!enableGPSTracking)
+                        toast.info(enableGPSTracking ? "GPS tracking disabled" : "GPS tracking enabled")
+                      }}
+                    >
+                      {enableGPSTracking ? "📍 Disable GPS" : "📍 Enable GPS"}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="w-full"
+                      onClick={() => {
+                        toggle()
+                        toast.info(isVoiceEnabled ? "Voice navigation disabled" : "Voice navigation enabled")
+                      }}
+                    >
+                      {isVoiceEnabled ? (
+                        <><Volume2 className="h-4 w-4 mr-2" /> Disable Voice</>
+                      ) : (
+                        <><VolumeX className="h-4 w-4 mr-2" /> Enable Voice</>
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         <div className="grid lg:grid-cols-3 gap-6">
           {/* Incident Queue */}
           <div className="lg:col-span-2 space-y-6">
@@ -219,9 +477,8 @@ export default function ResponderDashboard() {
                   {incidents.map((incident) => (
                     <Card
                       key={incident.id}
-                      className={`cursor-pointer transition-all hover:shadow-md ${
-                        selectedIncident === incident.id ? "ring-2 ring-primary" : ""
-                      } ${incident.severity === "high" ? "border-destructive/50" : ""}`}
+                      className={`cursor-pointer transition-all hover:shadow-md ${selectedIncident === incident.id ? "ring-2 ring-primary" : ""
+                        } ${incident.severity === "high" ? "border-destructive/50" : ""}`}
                       onClick={() => setSelectedIncident(incident.id)}
                     >
                       <CardContent className="p-4">
@@ -252,17 +509,34 @@ export default function ResponderDashboard() {
                           </div>
                           <div className="flex items-center space-x-2">
                             {incident.status === "active" && !incident.assignedTo && (
-                              <Button size="sm" onClick={() => handleClaimIncident(incident.id)}>
-                                Claim
-                              </Button>
+                              <>
+                                <Button size="sm" onClick={(e) => {
+                                  e.stopPropagation()
+                                  handleClaimIncident(incident.id)
+                                }}>
+                                  Claim
+                                </Button>
+                                <Button size="sm" variant="default" className="bg-blue-600 hover:bg-blue-700" onClick={(e) => {
+                                  e.stopPropagation()
+                                  handleAcceptAndNavigate(incident)
+                                }}>
+                                  <NavigationIcon className="h-3 w-3 mr-1" />
+                                  Accept & Navigate
+                                </Button>
+                              </>
                             )}
                             {incident.assignedTo && (
                               <Badge className={getStatusColor(incident.status)}>{incident.status}</Badge>
                             )}
-                            <Button variant="outline" size="sm">
-                              <NavigationIcon className="h-3 w-3 mr-1" />
-                              Navigate
-                            </Button>
+                            {incident.assignedTo && (
+                              <Button variant="outline" size="sm" onClick={(e) => {
+                                e.stopPropagation()
+                                handleAcceptAndNavigate(incident)
+                              }}>
+                                <NavigationIcon className="h-3 w-3 mr-1" />
+                                Navigate
+                              </Button>
+                            )}
                           </div>
                         </div>
                       </CardContent>
@@ -389,24 +663,36 @@ export default function ResponderDashboard() {
                           <h4 className="font-medium mb-2">Communication Log</h4>
                           <div className="space-y-2 text-sm">
                             <div className="flex justify-between">
-                              <span>11:25 AM - Incident claimed by responder</span>
+                              <span>System: Incident claimed</span>
                               <Badge variant="outline">System</Badge>
-                            </div>
-                            <div className="flex justify-between">
-                              <span>11:23 AM - Initial report received</span>
-                              <Badge variant="outline">Reporter</Badge>
                             </div>
                           </div>
                         </div>
-                        <div className="flex space-x-2">
-                          <Button variant="outline" className="flex-1 bg-transparent">
-                            <Phone className="h-4 w-4 mr-2" />
-                            Call Dispatch
-                          </Button>
-                          <Button variant="outline" className="flex-1 bg-transparent">
-                            <MessageCircle className="h-4 w-4 mr-2" />
-                            Radio Team
-                          </Button>
+                        <div className="space-y-2">
+                          <Label>Send Message to Admin</Label>
+                          <Textarea
+                            value={messageText}
+                            onChange={(e) => setMessageText(e.target.value)}
+                            placeholder="Type your message here..."
+                          />
+                          <Button onClick={async () => {
+                            if (!messageText) return
+                            try {
+                              await fetch('http://localhost:5000/api/messages', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  sender: "Responder",
+                                  text: messageText,
+                                  incidentId: selectedIncident
+                                })
+                              })
+                              toast.success("Message sent")
+                              setMessageText("")
+                            } catch (e) {
+                              toast.error("Failed to send")
+                            }
+                          }}>Send Message</Button>
                         </div>
                       </div>
                     </TabsContent>
@@ -439,7 +725,7 @@ export default function ResponderDashboard() {
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-muted-foreground">Location</span>
-                  <span className="font-medium">{currentLocation}</span>
+                  <span className="font-medium">{currentLocationName}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-muted-foreground">Active Incidents</span>
@@ -493,8 +779,8 @@ export default function ResponderDashboard() {
                   <Timer className="h-4 w-4 mr-2" />
                   Break Request
                 </Button>
-                <Button 
-                  variant="outline" 
+                <Button
+                  variant="outline"
                   className="w-full justify-start bg-transparent"
                   onClick={() => window.open('tel:9886744362', '_self')}
                 >

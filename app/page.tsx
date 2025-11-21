@@ -1,3 +1,7 @@
+"use client"
+
+import { useState } from "react"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -5,8 +9,32 @@ import { Shield, Users, Brain, AlertTriangle, MapPin, Clock, Phone, Mail, Buildi
 import Link from "next/link"
 import { Navigation } from "@/components/navigation"
 import { Footer } from "@/components/footer"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
+import dynamic from "next/dynamic"
+import { toast } from "sonner"
+
+const EventRegistrationMap = dynamic(
+  () => import("@/components/event-registration-map"),
+  { ssr: false }
+)
 
 export default function LandingPage() {
+  const router = useRouter()
+
+  const handleEventCreated = (eventData: any) => {
+    console.log("Event created:", eventData)
+    toast.success("Event registered successfully!", {
+      description: "You can now select this event when logging in."
+    })
+  }
+
   return (
     <div className="min-h-screen bg-background">
       <Navigation />
@@ -27,11 +55,23 @@ export default function LandingPage() {
               dashboards for comprehensive event safety management.
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
-              <Link href="/auth/register">
-                <Button size="lg" className="text-lg px-8 py-6">
-                  Register Your Event
-                </Button>
-              </Link>
+              <Dialog>
+                <DialogTrigger asChild>
+                  <Button size="lg" className="text-lg px-8 py-6">
+                    Register Your Event
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="sm:max-w-[900px] max-h-[90vh] overflow-y-auto">
+                  <DialogHeader>
+                    <DialogTitle>Register New Event</DialogTitle>
+                    <DialogDescription>
+                      Select the event location and radius on the map. The system will automatically configure zones and cameras.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <EventRegistrationMap onEventCreated={handleEventCreated} />
+                </DialogContent>
+              </Dialog>
+
               <Link href="/auth/login">
                 <Button size="lg" variant="outline" className="text-lg px-8 py-6 bg-transparent">
                   Access Existing Event

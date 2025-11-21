@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CrowdGuard API - Quick Access</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 600px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+        
+        h1 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+        
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 1.1em;
+        }
+        
+        .card {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 25px;
+            margin-bottom: 20px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .card h2 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 1.3em;
+        }
+        
+        .btn {
+            display: inline-block;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px 30px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 1.1em;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin: 5px;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-secondary {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+        
+        .feature-list {
+            list-style: none;
+            margin-top: 15px;
+        }
+        
+        .feature-list li {
+            padding: 8px 0;
+            color: #555;
+        }
+        
+        .feature-list li:before {
+            content: "✓ ";
+            color: #667eea;
+            font-weight: bold;
+            margin-right: 8px;
+        }
+        
+        .status {
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.9em;
+            font-weight: 600;
+        }
+        
+        .status.online {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .footer {
+            text-align: center;
+            margin-top: 30px;
+            color: #999;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🛡️ CrowdGuard API</h1>
+        <p class="subtitle">Interactive API Documentation & Testing</p>
+        
+        <div class="card">
+            <h2>📚 Swagger UI</h2>
+            <p>Test all API endpoints interactively with a beautiful interface</p>
+            <ul class="feature-list">
+                <li>Upload crowd surveillance videos</li>
+                <li>Test anomaly detection</li>
+                <li>Manage responders and zones</li>
+                <li>Calculate navigation paths</li>
+            </ul>
+            <div style="margin-top: 20px;">
+                <a href="http://localhost:5000/api/docs" class="btn" target="_blank">
+                    🚀 Open Swagger UI
+                </a>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h2>🎥 Quick Video Upload</h2>
+            <p>Upload crowd videos directly to the camera endpoint</p>
+            <div style="margin-top: 15px;">
+                <form id="uploadForm" enctype="multipart/form-data">
+                    <input type="file" id="videoFile" accept="video/*" style="margin-bottom: 10px; width: 100%;">
+                    <input type="text" id="zoneId" placeholder="Zone ID (e.g., zone1)" style="padding: 10px; margin-bottom: 10px; width: 100%; border: 1px solid #ddd; border-radius: 4px;">
+                    <button type="submit" class="btn btn-secondary" style="width: 100%;">
+                        📤 Upload Video
+                    </button>
+                </form>
+                <div id="uploadResult" style="margin-top: 15px;"></div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h2>🔗 Quick Links</h2>
+            <a href="http://localhost:3000/dashboard/admin" class="btn" target="_blank">
+                👨‍💼 Admin Dashboard
+            </a>
+            <a href="http://localhost:3000/dashboard/responder?type=medical" class="btn btn-secondary" target="_blank">
+                🚑 Responder Dashboard
+            </a>
+        </div>
+        
+        <div class="footer">
+            <p>CrowdGuard Platform v1.0.0 | Flask Backend + Next.js Frontend</p>
+        </div>
+    </div>
+    
+    <script>
+        document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const fileInput = document.getElementById('videoFile');
+            const zoneInput = document.getElementById('zoneId');
+            const resultDiv = document.getElementById('uploadResult');
+            
+            if (!fileInput.files[0]) {
+                resultDiv.innerHTML = '<p style="color: red;">Please select a video file</p>';
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('video', fileInput.files[0]);
+            formData.append('zone_id', zoneInput.value || 'unknown');
+            formData.append('camera_id', 'web_upload');
+            
+            resultDiv.innerHTML = '<p style="color: #667eea;">Uploading...</p>';
+            
+            try {
+                const response = await fetch('http://localhost:5000/api/cameras/upload-video', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    resultDiv.innerHTML = `
+                        <div style="background: #d4edda; padding: 15px; border-radius: 8px; color: #155724;">
+                            <strong>✓ Success!</strong><br>
+                            Video uploaded: ${data.video_url}<br>
+                            Zone: ${data.metadata.zone_id}
+                        </div>
+                    `;
+                } else {
+                    resultDiv.innerHTML = `<p style="color: red;">Error: ${data.error}</p>`;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<p style="color: red;">Error: ${error.message}</p>`;
+            }
+        });
+    </script>
+</body>
+</html>

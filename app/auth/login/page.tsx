@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState } from "react"
+import React, { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -9,19 +9,31 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Shield, ArrowLeft } from "lucide-react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
+import { toast } from "sonner"
 
 export default function LoginPage() {
   const [step, setStep] = useState<"event" | "role">("event")
   const [selectedEvent, setSelectedEvent] = useState("")
   const [selectedRole, setSelectedRole] = useState("")
   const [credentials, setCredentials] = useState({ email: "", password: "" })
+  const [events, setEvents] = useState<any[]>([])
   const router = useRouter()
 
-  const mockEvents = [
-    { id: "1", name: "Summer Music Festival 2025", date: "July 15-17, 2025" },
-    { id: "2", name: "Tech Conference Downtown", date: "March 22, 2025" },
-    { id: "3", name: "City Marathon Event", date: "April 8, 2025" },
-  ]
+  useEffect(() => {
+    const fetchEvents = async () => {
+      try {
+        const res = await fetch('http://localhost:5000/api/events')
+        if (res.ok) {
+          const data = await res.json()
+          setEvents(data)
+        }
+      } catch (error) {
+        console.error("Failed to fetch events", error)
+        toast.error("Failed to load events")
+      }
+    }
+    fetchEvents()
+  }, [])
 
   const roles = [
     { id: "user", name: "User", description: "General event monitoring and lost person search" },
@@ -32,9 +44,24 @@ export default function LoginPage() {
     { id: "technical", name: "Technical Responder", description: "Technical system support" },
   ]
 
-  const handleEventLogin = () => {
+  const handleEventLogin = async () => {
     if (selectedEvent) {
-      setStep("role")
+      try {
+        const res = await fetch('http://localhost:5000/api/events/select', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ event_id: selectedEvent })
+        })
+
+        if (res.ok) {
+          setStep("role")
+        } else {
+          toast.error("Failed to select event")
+        }
+      } catch (error) {
+        console.error("Error selecting event:", error)
+        toast.error("Network error selecting event")
+      }
     }
   }
 
@@ -84,11 +111,13 @@ export default function LoginPage() {
                     <SelectValue placeholder="Select an event" />
                   </SelectTrigger>
                   <SelectContent>
-                    {mockEvents.map((event) => (
+                    {events.map((event) => (
                       <SelectItem key={event.id} value={event.id}>
                         <div>
                           <div className="font-medium">{event.name}</div>
-                          <div className="text-sm text-muted-foreground">{event.date}</div>
+                          <div className="text-sm text-muted-foreground">
+                            {event.location ? `${event.location.lat.toFixed(4)}, ${event.location.lng.toFixed(4)}` : 'Location set'}
+                          </div>
                         </div>
                       </SelectItem>
                     ))}
@@ -166,7 +195,7 @@ export default function LoginPage() {
         <div className="text-center mt-6">
           <p className="text-sm text-muted-foreground">
             Need to register a new event?{" "}
-            <Link href="/auth/register" className="text-primary hover:underline">
+            <Link href="/" className="text-primary hover:underline">
               Register here
             </Link>
           </p>

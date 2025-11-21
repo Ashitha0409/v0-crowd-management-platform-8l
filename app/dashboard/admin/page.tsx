@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState } from "react"
+import React, { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -31,6 +31,8 @@ import {
   X,
   Play,
   Pause,
+  Phone,
+  Sparkles,
 } from "lucide-react"
 import Link from "next/link"
 import {
@@ -51,6 +53,21 @@ import {
 } from "recharts"
 import { AIChatbot } from "@/components/ai-chatbot"
 import { AIAnomalyDetection } from "@/components/ai-anomaly-detection"
+import { toast } from "sonner"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
+import dynamic from "next/dynamic"
+
+const EventRegistrationMap = dynamic(
+  () => import("@/components/event-registration-map"),
+  { ssr: false }
+)
 
 // Mock data for admin analytics
 const mockAnalytics = {
@@ -88,11 +105,12 @@ const mockAnalytics = {
     { zone: "Parking", density: 58, predictedDensity: 65, incidents: 0, cameras: 4, status: "medium" },
     { zone: "Backstage", density: 35, predictedDensity: 42, incidents: 0, cameras: 3, status: "low" },
   ],
+  // Fallback mock responders if API fails
   responderStatus: [
-    { name: "Dr. Sarah Johnson", type: "Medical", status: "active", zone: "Food Court", incidents: 2 },
-    { name: "Officer Mike Chen", type: "Security", status: "investigating", zone: "Parking", incidents: 1 },
-    { name: "Captain Lisa Wong", type: "Fire", status: "available", zone: "Backstage", incidents: 0 },
-    { name: "Tech Lead Alex Kim", type: "Technical", status: "active", zone: "Control Room", incidents: 1 },
+    { id: 1, name: "Dr. Sarah Johnson", type: "Medical", status: "active", zone: "Food Court", incidents: 2, phone: "+917337743545" },
+    { id: 2, name: "Officer Mike Chen", type: "Security", status: "investigating", zone: "Parking", incidents: 1, phone: "+917337743545" },
+    { id: 3, name: "Captain Lisa Wong", type: "Fire", status: "available", zone: "Backstage", incidents: 0, phone: "+917337743545" },
+    { id: 4, name: "Tech Lead Alex Kim", type: "Technical", status: "active", zone: "Control Room", incidents: 1, phone: "+917337743545" },
   ],
 }
 
@@ -127,15 +145,80 @@ export default function AdminDashboard() {
   const [selectedTimeRange, setSelectedTimeRange] = useState("today")
   const [selectedZone, setSelectedZone] = useState("all")
   const [isRefreshing, setIsRefreshing] = useState(false)
-  const [selectedZoneVideo, setSelectedZoneVideo] = useState<{zone: string, video: string} | null>(null)
+  const [selectedZoneVideo, setSelectedZoneVideo] = useState<{ zone: string, video: string } | null>(null)
   const [isZoneVideoPlaying, setIsZoneVideoPlaying] = useState(false)
+  const [zoneAnalysis, setZoneAnalysis] = useState<any>(null)
+
+  // Responders State
+  const [responders, setResponders] = useState<any[]>(mockAnalytics.responderStatus)
+  const [isLoadingResponders, setIsLoadingResponders] = useState(false)
+  const [callingResponderId, setCallingResponderId] = useState<number | null>(null)
 
   console.log("[v0] Admin dashboard rendering with state:", { selectedTimeRange, selectedZone, isRefreshing })
+
+  // Fetch responders from backend
+  useEffect(() => {
+    const fetchResponders = async () => {
+      setIsLoadingResponders(true)
+      try {
+        const response = await fetch('http://localhost:5000/api/responders')
+        if (response.ok) {
+          const data = await response.json()
+          setResponders(data)
+        } else {
+          console.error("Failed to fetch responders, using mock data")
+          toast.error("Failed to connect to backend. Using offline data.")
+        }
+      } catch (error) {
+        console.error("Error fetching responders:", error)
+        toast.error("Backend unreachable. Ensure Flask server is running.")
+      } finally {
+        setIsLoadingResponders(false)
+      }
+    }
+
+    fetchResponders()
+  }, [])
 
   const handleRefresh = () => {
     console.log("[v0] Refresh button clicked")
     setIsRefreshing(true)
     setTimeout(() => setIsRefreshing(false), 2000)
+  }
+
+  const handleEventCreated = (eventData: any) => {
+    console.log("Event created:", eventData)
+    // In a real app, we would update the dashboard state with the new zones
+    // For now, we just log it and maybe refresh the data
+    handleRefresh()
+  }
+
+  const handleCallResponder = async (responderId: number, responderName: string) => {
+    setCallingResponderId(responderId)
+    toast.info(`Initiating call to ${responderName}...`)
+
+    try {
+      const response = await fetch('http://localhost:5000/api/call', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ responder_id: responderId }),
+      })
+
+      const data = await response.json()
+
+      if (response.ok) {
+        toast.success(`Call initiated: ${data.message}`)
+      } else {
+        toast.error(`Call failed: ${data.error || 'Unknown error'}`)
+      }
+    } catch (error) {
+      console.error("Error calling responder:", error)
+      toast.error("Failed to initiate call. Check backend connection.")
+    } finally {
+      setCallingResponderId(null)
+    }
   }
 
   const getZoneVideoSource = (zoneName: string) => {
@@ -149,15 +232,28 @@ export default function AdminDashboard() {
     return "/videos/cam1.mp4"
   }
 
-  const handleViewZone = (zoneName: string) => {
+  const handleViewZone = async (zoneName: string) => {
     const videoSource = getZoneVideoSource(zoneName)
     setSelectedZoneVideo({ zone: zoneName, video: videoSource })
     setIsZoneVideoPlaying(true)
+
+    // Fetch Gemini Analysis
+    try {
+      const zoneId = zoneName.toLowerCase().replace(/ /g, '_')
+      const res = await fetch(`http://localhost:5000/api/zones/${zoneId}/density`, { method: 'POST' })
+      if (res.ok) {
+        const data = await res.json()
+        setZoneAnalysis(data)
+      }
+    } catch (e) {
+      console.error("Failed to fetch analysis", e)
+    }
   }
 
   const closeZoneVideoModal = () => {
     setSelectedZoneVideo(null)
     setIsZoneVideoPlaying(false)
+    setZoneAnalysis(null)
   }
 
   const getZoneStatusColor = (status: string) => {
@@ -565,50 +661,63 @@ export default function AdminDashboard() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
-                  {mockAnalytics.responderStatus.map((responder) => (
-                    <Card key={responder.name}>
-                      <CardContent className="p-4">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center space-x-4">
-                            <div>
-                              <h3 className="font-semibold">{responder.name}</h3>
-                              <p className="text-sm text-muted-foreground">{responder.type} Responder</p>
+                  {isLoadingResponders ? (
+                    <div className="text-center py-4">Loading responders...</div>
+                  ) : (
+                    responders.map((responder) => (
+                      <Card key={responder.id}>
+                        <CardContent className="p-4">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center space-x-4">
+                              <div>
+                                <h3 className="font-semibold">{responder.name}</h3>
+                                <p className="text-sm text-muted-foreground">{responder.type} Responder</p>
+                              </div>
+                              <Badge
+                                variant={responder.status === "available" ? "outline" : "default"}
+                                className={
+                                  responder.status === "available"
+                                    ? "bg-success/10 text-success border-success/20"
+                                    : responder.status === "active"
+                                      ? "bg-destructive/10 text-destructive border-destructive/20"
+                                      : "bg-warning/10 text-warning border-warning/20"
+                                }
+                              >
+                                {responder.status}
+                              </Badge>
                             </div>
-                            <Badge
-                              variant={responder.status === "available" ? "outline" : "default"}
-                              className={
-                                responder.status === "available"
-                                  ? "bg-success/10 text-success border-success/20"
-                                  : responder.status === "active"
-                                    ? "bg-destructive/10 text-destructive border-destructive/20"
-                                    : "bg-warning/10 text-warning border-warning/20"
-                              }
-                            >
-                              {responder.status}
-                            </Badge>
+                            <div className="flex items-center space-x-4 text-sm">
+                              <div>
+                                <Label className="text-xs text-muted-foreground">Zone</Label>
+                                <p className="font-medium">{responder.zone}</p>
+                              </div>
+                              <div>
+                                <Label className="text-xs text-muted-foreground">Active Incidents</Label>
+                                <p className="font-medium">{responder.incidents}</p>
+                              </div>
+                              <div>
+                                <Label className="text-xs text-muted-foreground">Contact</Label>
+                                <p className="font-medium">{responder.phone || "N/A"}</p>
+                              </div>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleCallResponder(responder.id, responder.name)}
+                                disabled={callingResponderId === responder.id}
+                              >
+                                {callingResponderId === responder.id ? (
+                                  <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
+                                ) : (
+                                  <Phone className="h-3 w-3 mr-1" />
+                                )}
+                                {callingResponderId === responder.id ? "Calling..." : "Call"}
+                              </Button>
+                            </div>
                           </div>
-                          <div className="flex items-center space-x-4 text-sm">
-                            <div>
-                              <Label className="text-xs text-muted-foreground">Zone</Label>
-                              <p className="font-medium">{responder.zone}</p>
-                            </div>
-                            <div>
-                              <Label className="text-xs text-muted-foreground">Active Incidents</Label>
-                              <p className="font-medium">{responder.incidents}</p>
-                            </div>
-                            <Button 
-                              variant="outline" 
-                              size="sm"
-                              onClick={() => window.open('tel:+919886744362', '_self')}
-                            >
-                              <MessageCircle className="h-3 w-3 mr-1" />
-                              Contact
-                            </Button>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
+                        </CardContent>
+                      </Card>
+                    ))
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -760,6 +869,58 @@ export default function AdminDashboard() {
                   </Button>
                 </div>
               </div>
+
+              {/* Gemini Analysis Section */}
+              {zoneAnalysis && (
+                <div className="mt-4 p-4 bg-slate-50 rounded-lg border animate-in fade-in slide-in-from-bottom-4">
+                  <h4 className="font-semibold mb-3 flex items-center text-purple-700">
+                    <Sparkles className="h-4 w-4 mr-2" />
+                    Gemini AI Real-time Analysis
+                  </h4>
+
+                  {zoneAnalysis.status === "no_data" ? (
+                    <div className="text-center py-6 border-2 border-dashed rounded-lg">
+                      <p className="text-muted-foreground font-medium mb-1">No Analysis Data Available</p>
+                      <p className="text-xs text-muted-foreground mb-4">Upload a video for this zone to generate AI insights.</p>
+                      <div className="text-xs bg-slate-100 p-2 rounded inline-block text-left">
+                        <code>POST /api/cameras/upload-video</code><br />
+                        <code>zone_id: {selectedZoneVideo.zone.toLowerCase().replace(/ /g, '_')}</code>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                      <div className="p-3 bg-white rounded border">
+                        <span className="text-muted-foreground block text-xs uppercase tracking-wider">Crowd Count</span>
+                        <span className="font-bold text-lg">{zoneAnalysis.people_count}</span>
+                      </div>
+                      <div className="p-3 bg-white rounded border">
+                        <span className="text-muted-foreground block text-xs uppercase tracking-wider">Density Level</span>
+                        <span className={`font-bold text-lg ${getZoneStatusColor(zoneAnalysis.density_level?.toLowerCase() || 'low')}`}>
+                          {zoneAnalysis.density_level}
+                        </span>
+                      </div>
+                      <div className="col-span-1 md:col-span-2 p-3 bg-white rounded border">
+                        <span className="text-muted-foreground block text-xs uppercase tracking-wider mb-1">Scene Description</span>
+                        <p className="text-slate-700 leading-relaxed">{zoneAnalysis.description}</p>
+                      </div>
+                      {zoneAnalysis.anomalies && zoneAnalysis.anomalies.length > 0 && (
+                        <div className="col-span-1 md:col-span-2 p-3 bg-red-50 rounded border border-red-100">
+                          <span className="text-red-600 font-semibold block text-xs uppercase tracking-wider mb-1">Detected Anomalies</span>
+                          <ul className="list-disc list-inside text-red-700 space-y-1">
+                            {zoneAnalysis.anomalies.map((a: string, i: number) => (
+                              <li key={i}>{a}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      <div className="col-span-1 md:col-span-2 flex items-center justify-between text-xs text-muted-foreground mt-2">
+                        <span>Sentiment: {zoneAnalysis.sentiment}</span>
+                        <span>Last Updated: {new Date(zoneAnalysis.timestamp).toLocaleTimeString()}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>

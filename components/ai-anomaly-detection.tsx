@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -14,6 +14,7 @@ interface AnomalyDetection {
   location: string
   cameraId: string
   timestamp: Date
+  videoTimestamp?: string
   description: string
   status: "active" | "investigating" | "resolved" | "false_positive"
   imageUrl?: string
@@ -28,67 +29,41 @@ export function AIAnomalyDetection({ context = "user" }: AIAnomalyDetectionProps
   const [isProcessing, setIsProcessing] = useState(true)
   const [selectedAnomaly, setSelectedAnomaly] = useState<AnomalyDetection | null>(null)
   const [isVideoPlaying, setIsVideoPlaying] = useState(false)
+  const videoRef = useRef<HTMLVideoElement>(null)
 
-  useEffect(() => {
-    // Simulate AI processing
-    const interval = setInterval(() => {
-      const newAnomaly = generateMockAnomaly()
-      if (newAnomaly && Math.random() > 0.7) {
-        // 30% chance of new anomaly every 10 seconds
-        setAnomalies((prev) => [newAnomaly, ...prev.slice(0, 4)]) // Keep last 5 anomalies
+  const fetchAnomalies = async () => {
+    try {
+      const res = await fetch('http://localhost:5000/api/anomalies/active')
+      if (res.ok) {
+        const data = await res.json()
+        const formatted = data.map((a: any) => ({
+          ...a,
+          timestamp: new Date(a.timestamp || Date.now()),
+          videoTimestamp: a.video_timestamp,
+          imageUrl: a.imageUrl || "/placeholder.svg",
+          // Ensure other fields are present
+          id: a.id || Math.random().toString(),
+          type: a.type || "other",
+          confidence: a.confidence || 0,
+          location: a.location || "Unknown",
+          cameraId: a.cameraId || "CAM-1",
+          description: a.description || "No description",
+          status: a.status || "active"
+        }))
+        setAnomalies(formatted)
       }
-    }, 10000)
-
-    // Initial load
-    setTimeout(() => {
-      setAnomalies([generateMockAnomaly(), generateMockAnomaly()].filter(Boolean) as AnomalyDetection[])
+    } catch (e) {
+      console.error("Failed to fetch anomalies", e)
+    } finally {
       setIsProcessing(false)
-    }, 2000)
-
-    return () => clearInterval(interval)
-  }, [])
-
-  const generateMockAnomaly = (): AnomalyDetection | null => {
-    const anomalyTypes = [
-      {
-        type: "crowd_behavior" as const,
-        description: "Unusual crowd movement pattern detected",
-        confidence: 85 + Math.random() * 10,
-        cameraId: "CAM-1", // Force cam1 for crowd behavior
-      },
-      {
-        type: "abandoned_object" as const,
-        description: "Unattended bag detected for over 10 minutes",
-        confidence: 92 + Math.random() * 5,
-        cameraId: "CAM-2", // Force cam2 for abandoned objects
-      },
-      {
-        type: "unusual_movement" as const,
-        description: "Person moving against crowd flow",
-        confidence: 78 + Math.random() * 15,
-        cameraId: "CAM-1",
-      },
-      {
-        type: "gathering" as const,
-        description: "Large group forming outside designated area",
-        confidence: 88 + Math.random() * 8,
-        cameraId: "CAM-2",
-      },
-    ]
-
-    const locations = ["Main Stage", "Food Court", "Entrance A", "VIP Area", "Parking Lot", "Backstage"]
-    const randomType = anomalyTypes[Math.floor(Math.random() * anomalyTypes.length)]
-    const randomLocation = locations[Math.floor(Math.random() * locations.length)]
-
-    return {
-      id: Date.now().toString(),
-      ...randomType,
-      location: randomLocation,
-      timestamp: new Date(),
-      status: "active",
-      imageUrl: "/placeholder.svg?height=100&width=150&text=CCTV+Frame",
     }
   }
+
+  useEffect(() => {
+    fetchAnomalies()
+    const interval = setInterval(fetchAnomalies, 5000)
+    return () => clearInterval(interval)
+  }, [])
 
   const getAnomalyColor = (type: string) => {
     switch (type) {
@@ -158,6 +133,22 @@ export function AIAnomalyDetection({ context = "user" }: AIAnomalyDetectionProps
     setSelectedAnomaly(null)
     setIsVideoPlaying(false)
   }
+
+  useEffect(() => {
+    if (selectedAnomaly && videoRef.current && selectedAnomaly.videoTimestamp) {
+      try {
+        const parts = selectedAnomaly.videoTimestamp.split(':')
+        if (parts.length === 2) {
+          const seconds = parseInt(parts[0]) * 60 + parseInt(parts[1])
+          if (!isNaN(seconds)) {
+            videoRef.current.currentTime = seconds
+          }
+        }
+      } catch (e) {
+        console.error("Error parsing timestamp", e)
+      }
+    }
+  }, [selectedAnomaly])
 
   if (isProcessing) {
     return (
@@ -296,6 +287,7 @@ export function AIAnomalyDetection({ context = "user" }: AIAnomalyDetectionProps
             <div className="p-4">
               <div className="relative bg-black rounded-lg overflow-hidden">
                 <video
+                  ref={videoRef}
                   src={getVideoSource(selectedAnomaly.cameraId)}
                   controls
                   autoPlay={isVideoPlaying}

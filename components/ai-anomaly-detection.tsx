@@ -305,6 +305,7 @@ export function AIAnomalyDetection({ context = "user" }: AIAnomalyDetectionProps
                       src={getVideoSource(selectedAnomaly.cameraId)}
                       controls
                       autoPlay={isVideoPlaying}
+                      loop
                       className="w-full h-auto max-h-[60vh]"
                       onPlay={() => setIsVideoPlaying(true)}
                       onPause={() => setIsVideoPlaying(false)}

@@ -98,7 +98,12 @@ swagger_template = {
 swagger = Swagger(app, config=swagger_config, template=swagger_template)
 
 # --- Configuration ---
-UPLOAD_FOLDER = 'uploads'
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# Go up one level if we are in backend dir
+if os.path.basename(BASE_DIR) == 'backend':
+    BASE_DIR = os.path.dirname(BASE_DIR)
+
+UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 

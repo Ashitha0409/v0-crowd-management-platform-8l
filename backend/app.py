@@ -1588,7 +1588,8 @@ def search_and_stream_video():
         if not os.path.exists(save_path):
              return jsonify({"error": "Failed to download video"}), 500
              
-        print(f"[{zone_id}] Downloaded video: {video_info.get('title', 'Unknown')}")
+        video_title = video_info.get('title', 'Unknown') if video_info else 'YouTube Video'
+        print(f"[{zone_id}] Downloaded video: {video_title}")
         
         # Start continuous analysis
         with VIDEO_PROCESSING_LOCK:
@@ -1616,7 +1617,7 @@ def search_and_stream_video():
             
         return jsonify({
             "message": "Video found and analysis started",
-            "video_title": video_info.get('title', 'Unknown'),
+            "video_title": video_title,
             "video_url": f"/uploads/{filename}",
             "zone_id": zone_id,
             "status": "Processing continuously"

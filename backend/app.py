@@ -1571,13 +1571,19 @@ def search_and_stream_video():
         }
         
         video_info = None
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # Search and download
-            info = ydl.extract_info(query, download=True)
-            if 'entries' in info:
-                video_info = info['entries'][0]
-            else:
-                video_info = info
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                # Search and download
+                info = ydl.extract_info(query, download=True)
+                if 'entries' in info:
+                    video_info = info['entries'][0]
+                else:
+                    video_info = info
+        except Exception as e:
+            print(f"yt-dlp warning/error: {e}")
+            # Continue if file exists, as max_downloads might trigger error
+            if not os.path.exists(save_path):
+                 return jsonify({"error": f"Failed to download video: {str(e)}"}), 500
                 
         if not os.path.exists(save_path):
              return jsonify({"error": "Failed to download video"}), 500

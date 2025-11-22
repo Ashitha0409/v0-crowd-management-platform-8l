@@ -175,30 +175,32 @@ EVENTS = [
 ]
 
 # --- Venue Graph for Pathfinding ---
-# Extended graph with more waypoints for longer routes
+# Realistic venue graph with Testing Region for fire emergency
 VENUE_GRAPH = {
-    "Entrance": {"Security Gate": 3, "Parking": 2},
-    "Security Gate": {"Entrance": 3, "Main Stage": 4, "Food Court": 2},
-    "Main Stage": {"Security Gate": 4, "Medical Bay": 3, "VIP Area": 2},
-    "Food Court": {"Security Gate": 2, "Medical Bay": 2, "Parking": 4},
-    "Parking": {"Entrance": 2, "Food Court": 4},
-    "Medical Bay": {"Main Stage": 3, "Food Court": 2, "Backstage": 3},
-    "Backstage": {"Medical Bay": 3, "VIP Area": 2, "Control Room": 2},
-    "VIP Area": {"Main Stage": 2, "Backstage": 2},
-    "Control Room": {"Backstage": 2}
+    "Entrance": {"Security Gate": 1, "Parking": 1, "Control Room": 1},
+    "Security Gate": {"Entrance": 1, "Food Court": 1, "Medical Bay": 1},
+    "Main Stage": {"Medical Bay": 1, "VIP Area": 1, "Testing Region": 1},
+    "Food Court": {"Security Gate": 1, "Medical Bay": 1},  # Can be avoided (crowded)
+    "Parking": {"Entrance": 1},
+    "Medical Bay": {"Security Gate": 1, "Main Stage": 1, "Testing Region": 1, "Food Court": 1},
+    "Testing Region": {"Medical Bay": 1, "Main Stage": 1, "VIP Area": 1},  # FIRE LOCATION
+    "Backstage": {"VIP Area": 1},
+    "VIP Area": {"Main Stage": 1, "Testing Region": 1, "Backstage": 1},
+    "Control Room": {"Entrance": 1}
 }
 
-# Real-world coordinates spread across ~3km area in Bangalore
+# Realistic venue coordinates (within 500m radius - typical large venue/festival)
 VENUE_COORDINATES = {
-    "Entrance": [12.9716, 77.5946],        # Starting point
-    "Security Gate": [12.9750, 77.5970],   # ~500m northeast
-    "Main Stage": [12.9850, 77.6050],      # ~1.5 km northeast
-    "Food Court": [12.9780, 77.5980],      # ~800m northeast (avoid zone)
-    "Parking": [12.9650, 77.5900],         # ~1 km southwest
-    "Medical Bay": [12.9800, 77.6000],     # ~1 km northeast
-    "Backstage": [12.9920, 77.6100],       # ~2.5 km northeast
-    "VIP Area": [12.9880, 77.6070],        # ~2 km northeast
-    "Control Room": [12.9950, 77.6120],    # ~3 km northeast
+    "Entrance": [12.9716, 77.5946],         # Starting point
+    "Security Gate": [12.9726, 77.5951],    # 130m from Entrance
+    "Main Stage": [12.9741, 77.5961],       # 300m from Entrance
+    "Food Court": [12.9731, 77.5956],       # 200m from Entrance (avoid zone)
+    "Parking": [12.9706, 77.5941],          # 150m from Entrance
+    "Medical Bay": [12.9736, 77.5956],      # 250m from Entrance
+    "Testing Region": [12.9746, 77.5951],   # 350m from Entrance (FIRE LOCATION)
+    "Backstage": [12.9751, 77.5966],        # 450m from Entrance
+    "VIP Area": [12.9746, 77.5961],         # 370m from Entrance
+    "Control Room": [12.9721, 77.5946],     # 60m from Entrance
 }
 
 # --- Helper Functions ---
@@ -2090,7 +2092,7 @@ def calculate_path():
             voice_instructions.append(f"Continue to {node}. Step {i} of {len(path) - 1}.")
     
     # Calculate total distance based on actual coordinates
-    total_distance = len(path) * 400  # Approximate 400m per segment for spread out venues
+    total_distance = len(path) * 100  # Approximate 100m per segment for venues
     
     return jsonify({
         "path_nodes": path,
@@ -2135,6 +2137,98 @@ def check_supabase_connection():
         print(f"Supabase connection issue: {e}")
         print("Running in in-memory mode. Data will not be persisted.")
         return False
+
+@app.route('/api/demo/reset', methods=['POST'])
+def reset_demo_data():
+    """
+    Reset all demo data to empty state
+    """
+    global ZONE_ANALYSIS, PERSISTENT_ANOMALIES, ZONE_HISTORY
+    
+    ZONE_ANALYSIS.clear()
+    PERSISTENT_ANOMALIES.clear()
+    for zone in ZONE_HISTORY:
+        ZONE_HISTORY[zone].clear()
+        
+    return jsonify({"message": "Demo data reset successfully. System is clean."})
+
+@app.route('/api/emergency/fire-alert', methods=['POST'])
+def trigger_fire_alert():
+    """
+    Emergency Fire Alert System - Triggers immediate fire response
+    """
+    global ZONE_ANALYSIS, PERSISTENT_ANOMALIES, ZONE_HISTORY
+    
+    # Create critical fire incident
+    fire_incident = {
+        'id': str(uuid.uuid4()),
+        'type': 'fire',
+        'description': 'Fire emergency detected in building - smoke and flames visible, people evacuating',
+        'timestamp': datetime.utcnow().isoformat() + 'Z',
+        'confidence': 95,
+        'location': 'Testing Region',
+        'zone_id': 'testing',
+        'status': 'active',
+        'severity': 'critical',
+        'image_url': '/uploads/anomaly_testing_fire.jpg'
+    }
+    
+    # Update zone analysis
+    ZONE_ANALYSIS['testing'] = {
+        'crowd_count': 35,
+        'density_level': 'Medium',
+        'anomalies': [fire_incident],
+        'description': 'Fire emergency situation - building evacuation underway',
+        'sentiment': 'Panic',
+        'timestamp': datetime.utcnow().isoformat() + 'Z'
+    }
+    
+    # Add to persistent storage for responder dashboard
+    PERSISTENT_ANOMALIES.append(fire_incident)
+    
+    # Add to zone history for tracking
+    ZONE_HISTORY['testing'].append({
+        'crowd_count': 35,
+        'density_level': 'Medium',
+        'timestamp': datetime.utcnow().isoformat() + 'Z'
+    })
+    
+    # Populate other zones with normal data
+    ZONE_ANALYSIS['parking'] = {
+        'crowd_count': 12,
+        'density_level': 'Low',
+        'anomalies': [],
+        'description': 'Parking lot with light vehicle traffic',
+        'sentiment': 'Calm',
+        'timestamp': datetime.utcnow().isoformat() + 'Z'
+    }
+    
+    ZONE_ANALYSIS['main_stage'] = {
+        'crowd_count': 450,
+        'density_level': 'Critical',
+        'anomalies': [],
+        'description': 'Concert event with large crowd near stage',
+        'sentiment': 'Agitated',
+        'timestamp': datetime.utcnow().isoformat() + 'Z'
+    }
+    
+    ZONE_ANALYSIS['food_court'] = {
+        'crowd_count': 78,
+        'density_level': 'Medium',
+        'anomalies': [],
+        'description': 'Shopping mall food court with moderate crowd',
+        'sentiment': 'Calm',
+        'timestamp': datetime.utcnow().isoformat() + 'Z'
+    }
+    
+    return jsonify({
+        'status': 'emergency_activated',
+        'incident_id': fire_incident['id'],
+        'type': 'fire',
+        'location': 'Testing Region',
+        'confidence': 95,
+        'message': 'Fire emergency alert triggered. Responders notified.'
+    })
 
 if __name__ == '__main__':
     check_supabase_connection()

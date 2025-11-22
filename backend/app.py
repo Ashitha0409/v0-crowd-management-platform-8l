@@ -853,9 +853,10 @@ def fast_continuous_video_processor(video_path, zone_id, stop_flag_dict):
                         print(f"[{zone_id}] Calling Gemini for detailed analysis (change: {crowd_change}, density: {density_level})")
                         
                         # Save frame temporarily
-                        temp_filename = f"temp_{zone_id}_{int(time.time())}.jpg"
-                        temp_frame_path = os.path.join(app.config['UPLOAD_FOLDER'], temp_filename)
-                        cv2.imwrite(temp_frame_path, frame)
+                        # Save frame with unique filename upfront
+                        frame_filename = f"anomaly_{zone_id}_{int(time.time())}_{uuid.uuid4().hex[:8]}.jpg"
+                        frame_path = os.path.join(app.config['UPLOAD_FOLDER'], frame_filename)
+                        cv2.imwrite(frame_path, frame)
                         
                         # Get Gemini analysis in background (non-blocking)
                         try:
@@ -867,7 +868,7 @@ def fast_continuous_video_processor(video_path, zone_id, stop_flag_dict):
                                 genai.configure(api_key=api_key)
                                 model = genai.GenerativeModel('models/gemini-flash-latest')
                                 
-                                frame_file = genai.upload_file(path=temp_frame_path)
+                                frame_file = genai.upload_file(path=frame_path)
                                 
                                 # Wait for processing
                                 while frame_file.state.name == "PROCESSING":
@@ -905,42 +906,35 @@ def fast_continuous_video_processor(video_path, zone_id, stop_flag_dict):
                                     
                                     last_gemini_call = analysis_count
                                     
-                                    # If anomalies detected, save the frame permanently
+                                    # If anomalies detected, keep the frame
                                     if analysis['anomalies']:
-                                        # Create unique filename for the anomaly frame
-                                        anomaly_filename = f"anomaly_{zone_id}_{int(time.time())}_{uuid.uuid4().hex[:8]}.jpg"
-                                        anomaly_path = os.path.join(app.config['UPLOAD_FOLDER'], anomaly_filename)
-                                        
-                                        # Rename temp file to permanent file
-                                        if os.path.exists(temp_frame_path):
-                                            os.rename(temp_frame_path, anomaly_path)
-                                            print(f"[{zone_id}] Saved anomaly frame: {anomaly_filename}")
+                                        print(f"[{zone_id}] Saved anomaly frame: {frame_filename}")
                                             
-                                            # Add image URL to each anomaly
-                                            for anomaly in analysis['anomalies']:
-                                                anomaly['imageUrl'] = f"/uploads/{anomaly_filename}"
-                                                anomaly['timestamp'] = analysis['timestamp']
-                                                anomaly['zone_id'] = zone_id
-                                                anomaly['id'] = f"{zone_id}_{int(time.time())}_{uuid.uuid4().hex[:8]}"
-                                                
-                                                # Add to persistent storage
-                                                PERSISTENT_ANOMALIES.append(anomaly.copy())
-                                                
-                                                if anomaly.get('confidence', 0) > 70:
-                                                    send_anomaly_alert(zone_id, anomaly.get('type', 'Unknown'), anomaly.get('description', 'No description'))
+                                        # Add image URL to each anomaly
+                                        for anomaly in analysis['anomalies']:
+                                            anomaly['imageUrl'] = f"/uploads/{frame_filename}"
+                                            anomaly['timestamp'] = analysis['timestamp']
+                                            anomaly['zone_id'] = zone_id
+                                            anomaly['id'] = f"{zone_id}_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+                                            
+                                            # Add to persistent storage
+                                            PERSISTENT_ANOMALIES.append(anomaly.copy())
+                                            
+                                            if anomaly.get('confidence', 0) > 70:
+                                                send_anomaly_alert(zone_id, anomaly.get('type', 'Unknown'), anomaly.get('description', 'No description'))
                                     else:
-                                        # No anomalies, delete temp file
-                                        if os.path.exists(temp_frame_path):
-                                            os.remove(temp_frame_path)
+                                        # No anomalies, delete file
+                                        if os.path.exists(frame_path):
+                                            os.remove(frame_path)
                                 
                                 # Clean up if still exists (fallback)
-                                if os.path.exists(temp_frame_path):
-                                    os.remove(temp_frame_path)
+                                # if os.path.exists(frame_path) and not analysis['anomalies']:
+                                #    os.remove(frame_path)
                         
                         except Exception as e:
                             print(f"[{zone_id}] Gemini call failed: {e}")
-                            if os.path.exists(temp_frame_path):
-                                os.remove(temp_frame_path)
+                            if os.path.exists(frame_path):
+                                os.remove(frame_path)
                     
                     # Update global analysis
                     ZONE_ANALYSIS[zone_id] = analysis

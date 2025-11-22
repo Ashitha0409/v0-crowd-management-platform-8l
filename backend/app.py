@@ -38,6 +38,41 @@ VIDEO_PROCESSING_LOCK = threading.Lock()
 LOST_PERSONS = []
 FOUND_MATCHES = []
 
+# Gemini API Key Management
+GEMINI_KEYS = [
+    "AIzaSyBdtYLpUucxwys-2KIHELwKT6OQPb7VWL0", # Primary key provided by user
+]
+CURRENT_KEY_INDEX = 0
+
+def get_gemini_key():
+    """
+    Get the next available Gemini API key from the pool.
+    Rotates through keys to distribute load.
+    """
+    global CURRENT_KEY_INDEX, GEMINI_KEYS
+    
+    # Try to load more keys from env or file if not already loaded
+    if len(GEMINI_KEYS) == 1:
+        env_key = os.getenv("GEMINI_API_KEY")
+        if env_key and env_key not in GEMINI_KEYS:
+            GEMINI_KEYS.append(env_key)
+            
+        key_files = ["gemini_key.txt", "../gemini_key.txt", "backend/gemini_key.txt"]
+        for kf in key_files:
+            if os.path.exists(kf):
+                try:
+                    with open(kf, "r") as f:
+                        file_key = f.read().strip()
+                    if file_key and "PASTE" not in file_key and file_key not in GEMINI_KEYS:
+                        GEMINI_KEYS.append(file_key)
+                except:
+                    pass
+    
+    # Round-robin selection
+    key = GEMINI_KEYS[CURRENT_KEY_INDEX]
+    CURRENT_KEY_INDEX = (CURRENT_KEY_INDEX + 1) % len(GEMINI_KEYS)
+    return key
+
 # Predefined camera endpoints for specific zones
 CAMERA_ENDPOINTS = {
     'food_court': {
@@ -600,42 +635,6 @@ def get_crowd_prediction(zone_id):
         "history": [{"time": h['timestamp'][11:16], "density": h['crowd_count']} for h in recent_data]
     })
 
-def analyze_video_with_gemini(video_path, zone_id):
-    try:
-        import google.generativeai as genai
-        
-        # Load API Key
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            # Fallback to file - check multiple locations
-            key_files = ["gemini_key.txt", "../gemini_key.txt", "backend/gemini_key.txt"]
-            for kf in key_files:
-                if os.path.exists(kf):
-                    try:
-                        with open(kf, "r") as f:
-                            possible_key = f.read().strip()
-                        if possible_key and "PASTE" not in possible_key:
-                            api_key = possible_key
-                            break
-                    except:
-                        pass
-        
-        if not api_key or "PASTE" in api_key:
-            print("Gemini API Key not found or invalid.")
-            return None
-
-        genai.configure(api_key=api_key)
-        
-        # Upload file
-        print(f"Uploading {video_path} to Gemini...")
-        video_file = genai.upload_file(path=video_path)
-        
-        # Wait for processing
-        print("Waiting for video processing...", end='')
-        while video_file.state.name == "PROCESSING":
-            print('.', end='')
-            time.sleep(2)
-            video_file = genai.get_file(video_file.name)
 
         if video_file.state.name == "FAILED":
             print("Video processing failed.")
@@ -676,6 +675,115 @@ def analyze_video_with_gemini(video_path, zone_id):
         text = response.text
         # Extract JSON block if wrapped in markdown
         match = re.search(r'```json\n(.*?)\n```', text, re.DOTALL)
+        if match:
+            json_str = match.group(1)
+        else:
+            json_str = text
+            
+        analysis = json.loads(json_str)
+        analysis['timestamp'] = datetime.utcnow().isoformat() + "Z"
+        
+        # Handle found persons
+        if 'found_persons' in analysis and analysis['found_persons']:
+            for match in analysis['found_persons']:
+                match['zone_id'] = zone_id
+                match['found_at'] = datetime.utcnow().isoformat() + "Z"
+                FOUND_MATCHES.append(match)
+                
+                # Update lost person status if confidence is high
+                if match.get('confidence', 0) > 80:
+                    for p in LOST_PERSONS:
+                        if p['id'] == match.get('person_id'):
+                            p['status'] = 'found'
+                            p['found_location'] = zone_id
+                            break
+        
+        # Store in global
+        ZONE_ANALYSIS[zone_id] = analysis
+        
+        # Check for anomalies and send SMS
+        if 'anomalies' in analysis and analysis['anomalies']:
+            for anomaly in analysis['anomalies']:
+                # Send alert for high confidence anomalies
+                if anomaly.get('confidence', 0) > 70:
+                    send_anomaly_alert(zone_id, anomaly.get('type', 'Unknown'), anomaly.get('description', 'No description'))
+                    
+        print(f"Analysis complete for {zone_id}: {analysis}")
+        return analysis
+        
+    except Exception as e:
+        print(f"Gemini Analysis Error: {e}")
+        return None
+
+def analyze_video_with_gemini(video_path, zone_id):
+    try:
+        import google.generativeai as genai
+        
+        # Load API Key
+        api_key = get_gemini_key()
+        
+        if not api_key or "PASTE" in api_key:
+            print(f"[{zone_id}] Gemini API Key not found or invalid.")
+            return {
+                'crowd_count': 0,
+                'density_level': 'Low',
+                'anomalies': [],
+                'description': "Analysis failed: API Key missing",
+                'sentiment': "Unknown"
+            }
+            
+        genai.configure(api_key=api_key)
+        
+        # Upload file
+        print(f"Uploading {video_path} to Gemini...")
+        video_file = genai.upload_file(path=video_path)
+        
+        # Wait for processing
+        print("Waiting for video processing...", end='')
+        while video_file.state.name == "PROCESSING":
+            print('.', end='')
+            time.sleep(2)
+            video_file = genai.get_file(video_file.name)
+
+        if video_file.state.name == "FAILED":
+            print("Video processing failed.")
+            return None
+
+        print(" Analyzing...")
+        # Use a model that is definitely available
+        model = genai.GenerativeModel('models/gemini-flash-latest')
+        
+        # Construct prompt with lost persons
+        lost_persons_desc = ""
+        active_lost_persons = [p for p in LOST_PERSONS if p['status'] == 'active']
+        if active_lost_persons:
+            lost_persons_desc = "Also, check if any of the following lost persons are present in the video:\\n"
+            for p in active_lost_persons:
+                lost_persons_desc += f"- ID: {p['id']}, Name: {p['name']}, Age: {p['age']}, Description: {p['description']}\\n"
+            lost_persons_desc += "If found, include a 'found_persons' list in the JSON with: person_id, timestamp, confidence, and description of where they are in the frame."
+
+        prompt = f"""
+        Analyze this CCTV footage for crowd management. 
+        {lost_persons_desc}
+        Return a JSON object with the following fields:
+        - crowd_count (integer): Estimated number of people.
+        - density_level (string): "Low", "Medium", "High", or "Critical".
+        - anomalies (list of objects): List of anomalies. Each object should have:
+            - type (string): "violence", "crowd_behavior", "abandoned_object", "unusual_movement", "gathering", or "other".
+            - description (string): Brief description.
+            - timestamp (string): Time of occurrence in "MM:SS" format.
+            - confidence (integer): 0-100.
+        - found_persons (list of objects): List of found lost persons (if any).
+        - description (string): Brief summary of the scene.
+        - sentiment (string): "Calm", "Agitated", "Panic", or "Happy".
+        """
+        
+        response = model.generate_content([video_file, prompt], request_options={"timeout": 600})
+        
+        # Parse JSON from response
+        text = response.text
+        # Extract JSON block if wrapped in markdown
+        match = re.search(r'```json\\n(.*?)\\n```', text, re.DOTALL)
         if match:
             json_str = match.group(1)
         else:
@@ -827,21 +935,9 @@ def fast_continuous_video_processor(video_path, zone_id, stop_flag_dict):
                         try:
                             import google.generativeai as genai
                             
-                            api_key = os.getenv("GEMINI_API_KEY")
-                            if not api_key:
-                                key_files = ["gemini_key.txt", "../gemini_key.txt", "backend/gemini_key.txt"]
-                                for kf in key_files:
-                                    if os.path.exists(kf):
-                                        try:
-                                            with open(kf, "r") as f:
-                                                possible_key = f.read().strip()
-                                            if possible_key and "PASTE" not in possible_key:
-                                                api_key = possible_key
-                                                break
-                                        except:
-                                            pass
+                            api_key = get_gemini_key()
                             
-                            if api_key and "PASTE" not in api_key:
+                            if api_key:
                                 genai.configure(api_key=api_key)
                                 model = genai.GenerativeModel('models/gemini-flash-latest')
                                 

@@ -22,6 +22,9 @@ load_dotenv() # Load .env if present
 ZONE_ANALYSIS = {}
 MESSAGES = []
 
+# Persistent anomaly storage - never cleared, accumulates all anomalies
+PERSISTENT_ANOMALIES = []  # List of all anomalies detected across all zones
+
 # Historical data for real-time graphs (stores last 20 data points per zone)
 ZONE_HISTORY = {
     'food_court': [],
@@ -917,6 +920,11 @@ def fast_continuous_video_processor(video_path, zone_id, stop_flag_dict):
                                             for anomaly in analysis['anomalies']:
                                                 anomaly['imageUrl'] = f"/uploads/{anomaly_filename}"
                                                 anomaly['timestamp'] = analysis['timestamp']
+                                                anomaly['zone_id'] = zone_id
+                                                anomaly['id'] = f"{zone_id}_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+                                                
+                                                # Add to persistent storage
+                                                PERSISTENT_ANOMALIES.append(anomaly.copy())
                                                 
                                                 if anomaly.get('confidence', 0) > 70:
                                                     send_anomaly_alert(zone_id, anomaly.get('type', 'Unknown'), anomaly.get('description', 'No description'))
@@ -1749,36 +1757,11 @@ def detect_anomaly():
 @app.route('/api/anomalies/active', methods=['GET'])
 def get_active_anomalies():
     """
-    Get all active anomalies across all zones
+    Get all active anomalies across all zones from persistent storage
     """
-    active_anomalies = []
-    for zone_id, analysis in ZONE_ANALYSIS.items():
-        raw_anomalies = analysis.get('anomalies', [])
-        for a in raw_anomalies:
-            if isinstance(a, dict):
-                active_anomalies.append({
-                    "id": f"{zone_id}_{a.get('timestamp', '0000')}_{random.randint(1000,9999)}",
-                    "type": a.get('type', 'other'),
-                    "description": a.get('description'),
-                    "location": zone_id, # In real app, map ID to Name
-                    "timestamp": analysis.get('timestamp'),
-                    "video_timestamp": a.get('timestamp'),
-                    "confidence": a.get('confidence', 80),
-                    "status": "active",
-                    "imageUrl": a.get('imageUrl', '/placeholder.svg')
-                })
-            else:
-                active_anomalies.append({
-                    "id": f"{zone_id}_{random.randint(1000,9999)}",
-                    "type": "other",
-                    "description": str(a),
-                    "location": zone_id,
-                    "timestamp": analysis.get('timestamp'),
-                    "confidence": 80,
-                    "status": "active",
-                    "imageUrl": "/placeholder.svg"
-                })
-    return jsonify(active_anomalies)
+    # Return all anomalies from persistent storage
+    # They already have all required fields: id, type, description, location, timestamp, etc.
+    return jsonify(PERSISTENT_ANOMALIES)
 
 @app.route('/api/messages', methods=['GET', 'POST'])
 def handle_messages():

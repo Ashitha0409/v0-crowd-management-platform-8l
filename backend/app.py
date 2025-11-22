@@ -1500,6 +1500,107 @@ def stop_all_continuous_processing():
         "stopped_count": stopped_count
     })
 
+@app.route('/api/cameras/search-stream', methods=['POST'])
+def search_and_stream_video():
+    """
+    Search YouTube for a video and start continuous analysis
+    ---
+    tags:
+      - Camera Management
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+            type: object
+            properties:
+                query:
+                    type: string
+                    example: "crowd walking in mall"
+                zone_id:
+                    type: string
+                    example: "food_court"
+    responses:
+      200:
+        description: Video found and analysis started
+    """
+    try:
+        data = request.json
+        query = data.get('query')
+        zone_id = data.get('zone_id', 'testing')
+        
+        if not query:
+            return jsonify({"error": "Query is required"}), 400
+            
+        print(f"[{zone_id}] Searching YouTube for: {query}")
+        
+        # Use yt-dlp to search and download
+        import yt_dlp
+        
+        # Create a safe filename from query
+        safe_query = "".join([c for c in query if c.isalnum() or c in (' ', '-', '_')]).strip().replace(' ', '_')
+        filename = f"yt_{safe_query}_{int(time.time())}.mp4"
+        save_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        
+        ydl_opts = {
+            'format': 'best[ext=mp4]/best',
+            'outtmpl': save_path,
+            'noplaylist': True,
+            'quiet': True,
+            'default_search': 'ytsearch1:',  # Search and get 1st result
+            'max_downloads': 1
+        }
+        
+        video_info = None
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # Search and download
+            info = ydl.extract_info(query, download=True)
+            if 'entries' in info:
+                video_info = info['entries'][0]
+            else:
+                video_info = info
+                
+        if not os.path.exists(save_path):
+             return jsonify({"error": "Failed to download video"}), 500
+             
+        print(f"[{zone_id}] Downloaded video: {video_info.get('title', 'Unknown')}")
+        
+        # Start continuous analysis
+        with VIDEO_PROCESSING_LOCK:
+            # Stop existing processor if any
+            if zone_id in ACTIVE_VIDEO_PROCESSORS:
+                ACTIVE_VIDEO_PROCESSORS[zone_id]['stop_flag']['stop'] = True
+                print(f"[{zone_id}] Stopping previous processor...")
+                time.sleep(1) # Give it a moment to stop
+            
+            # Start new processor
+            stop_flag = {'stop': False}
+            thread = threading.Thread(
+                target=fast_continuous_video_processor,
+                args=(save_path, zone_id, stop_flag),
+                daemon=True
+            )
+            thread.start()
+            
+            ACTIVE_VIDEO_PROCESSORS[zone_id] = {
+                'thread': thread,
+                'stop_flag': stop_flag,
+                'video_path': save_path,
+                'started_at': datetime.utcnow().isoformat() + "Z"
+            }
+            
+        return jsonify({
+            "message": "Video found and analysis started",
+            "video_title": video_info.get('title', 'Unknown'),
+            "video_url": f"/uploads/{filename}",
+            "zone_id": zone_id,
+            "status": "Processing continuously"
+        })
+        
+    except Exception as e:
+        print(f"Search error: {e}")
+        return jsonify({"error": str(e)}), 500
+
 
 
 @app.route('/api/cameras/endpoints', methods=['GET'])

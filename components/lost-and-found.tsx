@@ -159,10 +159,20 @@ export function LostAndFound({ userType = "user" }: { userType?: "user" | "admin
                         AI-powered lost person tracking and identification
                     </p>
                 </div>
-                <Badge variant="outline" className="flex items-center gap-1">
-                    <Search className="h-3 w-3" />
-                    {reports.length} Active Reports
-                </Badge>
+                <div className="flex items-center gap-3">
+                    {userType === "user" && (
+                        <Button
+                            onClick={() => window.open('https://lost-and-found-396665235482.us-west1.run.app/', '_blank')}
+                            className="bg-blue-600 hover:bg-blue-700"
+                        >
+                            Open Lost & Found App
+                        </Button>
+                    )}
+                    <Badge variant="outline" className="flex items-center gap-1">
+                        <Search className="h-3 w-3" />
+                        {reports.length} Active Reports
+                    </Badge>
+                </div>
             </div>
 
             <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">

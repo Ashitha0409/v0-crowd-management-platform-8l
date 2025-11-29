@@ -30,8 +30,8 @@ export function useVoiceNavigation() {
         }
     }, [])
 
-    const speak = (text: string) => {
-        if (!isEnabled || !utteranceRef.current) return
+    const speak = (text: string, force: boolean = false) => {
+        if ((!isEnabled && !force) || !utteranceRef.current) return
 
         // Cancel any ongoing speech
         window.speechSynthesis.cancel()

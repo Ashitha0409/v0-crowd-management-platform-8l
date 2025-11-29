@@ -34,3 +34,5 @@ gemini_key.txt
 
 # uploads
 uploads/
+
+backend/venv/

@@ -83,7 +83,25 @@ export default function UserDashboard() {
                 zone.prediction = predData.predicted_count_15min
                 // If selected zone, update chart data
                 if (zone.id === selectedZone) {
-                  setCrowdData(predData.history || [])
+                  const history = (predData.history || []).map((h: any) => ({
+                    time: h.time,
+                    density: h.density,
+                    prediction: null
+                  }));
+
+                  if (history.length > 0) {
+                    // Connect the lines by setting prediction value on the last history point
+                    const lastPoint = history[history.length - 1];
+                    lastPoint.prediction = lastPoint.density;
+
+                    // Add prediction point
+                    history.push({
+                      time: "+15m",
+                      density: null,
+                      prediction: predData.predicted_count_15min
+                    });
+                  }
+                  setCrowdData(history)
                 }
               }
             } catch (e) { console.error(e) }
@@ -434,7 +452,11 @@ export default function UserDashboard() {
                   <MessageCircle className="h-4 w-4 mr-2" />
                   Contact Support
                 </Button>
-                <Button variant="outline" className="w-full justify-start bg-transparent">
+                <Button
+                  variant="outline"
+                  className="w-full justify-start bg-transparent"
+                  onClick={() => window.open('https://lost-and-found-396665235482.us-west1.run.app/', '_blank')}
+                >
                   <Users className="h-4 w-4 mr-2" />
                   Find Lost Person
                 </Button>

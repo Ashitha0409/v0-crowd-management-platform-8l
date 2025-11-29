@@ -4,7 +4,7 @@ from twilio.rest import Client
 from flasgger import Swagger, swag_from
 import os
 from werkzeug.utils import secure_filename
-from datetime import datetime
+from datetime import datetime, timedelta
 import heapq
 import json
 import time
@@ -15,6 +15,29 @@ from dotenv import load_dotenv
 import threading
 import cv2
 import PIL.Image
+import sys
+
+# Fix Windows console encoding for emoji support
+if sys.platform == 'win32':
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except:
+        pass
+
+def safe_print(*args, **kwargs):
+    """Safe print function that handles Unicode errors on Windows"""
+    try:
+        print(*args, **kwargs)
+    except UnicodeEncodeError:
+        # Fallback: remove emojis
+        safe_args = []
+        for arg in args:
+            if isinstance(arg, str):
+                # Remove emojis by encoding to ASCII with ignore
+                safe_args.append(arg.encode('ascii', 'ignore').decode('ascii'))
+            else:
+                safe_args.append(arg)
+        print(*safe_args, **kwargs)
 
 load_dotenv() # Load .env if present
 
@@ -43,7 +66,7 @@ FOUND_MATCHES = []
 
 # Gemini API Key Management
 GEMINI_KEYS = [
-    "AIzaSyBdtYLpUucxwys-2KIHELwKT6OQPb7VWL0", # Primary key provided by user
+    "AIzaSyDf85wdvRbpfi1BV9bO6iOSA962NDTpR78",  # Working key
 ]
 CURRENT_KEY_INDEX = 0
 
@@ -137,9 +160,9 @@ swagger = Swagger(app, config=swagger_config, template=swagger_template)
 
 # --- Configuration ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-# Go up one level if we are in backend dir
-if os.path.basename(BASE_DIR) == 'backend':
-    BASE_DIR = os.path.dirname(BASE_DIR)
+# Keep BASE_DIR as backend folder
+# if os.path.basename(BASE_DIR) == 'backend':
+#     BASE_DIR = os.path.dirname(BASE_DIR)
 
 UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
 if not os.path.exists(UPLOAD_FOLDER):
@@ -176,17 +199,18 @@ EVENTS = [
 
 # --- Venue Graph for Pathfinding ---
 # Realistic venue graph with Testing Region for fire emergency
+# Bidirectional connections ensure paths can always be found
 VENUE_GRAPH = {
-    "Entrance": {"Security Gate": 1, "Parking": 1, "Control Room": 1},
-    "Security Gate": {"Entrance": 1, "Food Court": 1, "Medical Bay": 1},
-    "Main Stage": {"Medical Bay": 1, "VIP Area": 1, "Testing Region": 1},
+    "Entrance": {"Security Gate": 1, "Parking": 1, "Control Room": 1, "Medical Bay": 2},
+    "Security Gate": {"Entrance": 1, "Food Court": 1, "Medical Bay": 1, "Main Stage": 2},
+    "Main Stage": {"Medical Bay": 1, "VIP Area": 1, "Testing Region": 1, "Security Gate": 2},
     "Food Court": {"Security Gate": 1, "Medical Bay": 1},  # Can be avoided (crowded)
-    "Parking": {"Entrance": 1},
-    "Medical Bay": {"Security Gate": 1, "Main Stage": 1, "Testing Region": 1, "Food Court": 1},
+    "Parking": {"Entrance": 1, "Control Room": 1},
+    "Medical Bay": {"Security Gate": 1, "Main Stage": 1, "Testing Region": 1, "Food Court": 1, "Entrance": 2},
     "Testing Region": {"Medical Bay": 1, "Main Stage": 1, "VIP Area": 1},  # FIRE LOCATION
-    "Backstage": {"VIP Area": 1},
+    "Backstage": {"VIP Area": 1, "Main Stage": 1},
     "VIP Area": {"Main Stage": 1, "Testing Region": 1, "Backstage": 1},
-    "Control Room": {"Entrance": 1}
+    "Control Room": {"Entrance": 1, "Parking": 1, "Security Gate": 2}
 }
 
 # Realistic venue coordinates (within 500m radius - typical large venue/festival)
@@ -678,8 +702,8 @@ def analyze_video_with_gemini(video_path, zone_id):
             return None
 
         print(" Analyzing...")
-        # Use a model that is definitely available
-        model = genai.GenerativeModel('models/gemini-flash-latest')
+        # Use confirmed working model
+        model = genai.GenerativeModel('models/gemini-2.5-flash')
         
         # Construct prompt with lost persons
         lost_persons_desc = ""
@@ -868,7 +892,7 @@ def fast_continuous_video_processor(video_path, zone_id, stop_flag_dict):
                             
                             if api_key:
                                 genai.configure(api_key=api_key)
-                                model = genai.GenerativeModel('models/gemini-flash-latest')
+                                model = genai.GenerativeModel('models/gemini-2.5-flash')
                                 
                                 frame_file = genai.upload_file(path=frame_path)
                                 
@@ -879,13 +903,27 @@ def fast_continuous_video_processor(video_path, zone_id, stop_flag_dict):
                                 
                                 if frame_file.state.name != "FAILED":
                                     prompt = f"""
-                                    Analyze this CCTV frame for anomalies and crowd behavior.
-                                    Current OpenCV detection: {crowd_count} people, {density_level} density.
+                                    Analyze this CCTV frame for SECURITY THREATS and SAFETY CONCERNS only.
+                                    
+                                    IMPORTANT: Do NOT report technical detection issues, system errors, or crowd count mismatches.
+                                    Only report REAL security threats such as:
+                                    - Fire/smoke
+                                    - Violence or fighting
+                                    - Suspicious behavior
+                                    - Abandoned objects
+                                    - Unauthorized access
+                                    - Medical emergencies
+                                    - Panic situations
                                     
                                     Return JSON with:
-                                    - anomalies (list): Any detected anomalies with type, description, confidence
+                                    - anomalies (list): ONLY real security threats. Each with:
+                                      * type: "fire", "violence", "suspicious_behavior", "abandoned_object", "medical_emergency", "panic", "unauthorized_access"
+                                      * description: Brief, clear description of the threat
+                                      * confidence: 0-100
                                     - sentiment (string): "Calm", "Agitated", "Panic", or "Happy"
                                     - description (string): Brief scene summary
+                                    
+                                    If NO real threats exist, return empty anomalies array.
                                     """
                                     
                                     response = model.generate_content([frame_file, prompt], request_options={"timeout": 30})
@@ -901,7 +939,35 @@ def fast_continuous_video_processor(video_path, zone_id, stop_flag_dict):
                                     gemini_data = json.loads(json_str)
                                     
                                     # Merge Gemini data with OpenCV data
-                                    analysis['anomalies'] = gemini_data.get('anomalies', [])
+                                    gemini_anomalies = gemini_data.get('anomalies', [])
+                                    
+                                    # Filter out technical/system errors - only keep real security threats
+                                    VALID_ANOMALY_TYPES = [
+                                        'fire', 'violence', 'suspicious_behavior', 'abandoned_object',
+                                        'medical_emergency', 'panic', 'unauthorized_access', 'weapon',
+                                        'intrusion', 'vandalism', 'theft', 'crowd_surge'
+                                    ]
+                                    
+                                    filtered_anomalies = []
+                                    for anomaly in gemini_anomalies:
+                                        anomaly_type = anomaly.get('type', '').lower()
+                                        anomaly_desc = anomaly.get('description', '').lower()
+                                        
+                                        # Skip if it's a technical/detection error
+                                        skip_keywords = [
+                                            'detection', 'error', 'inconsistency', 'mismatch', 
+                                            'opencv', 'system', 'incorrect', 'discrepancy',
+                                            'technical', 'count', 'density mismatch'
+                                        ]
+                                        
+                                        is_technical_error = any(keyword in anomaly_type for keyword in skip_keywords) or \
+                                                           any(keyword in anomaly_desc for keyword in skip_keywords)
+                                        
+                                        # Only keep real security threats
+                                        if not is_technical_error and anomaly_type in VALID_ANOMALY_TYPES:
+                                            filtered_anomalies.append(anomaly)
+                                    
+                                    analysis['anomalies'] = filtered_anomalies
                                     analysis['sentiment'] = gemini_data.get('sentiment', sentiment)
                                     analysis['description'] = gemini_data.get('description', analysis['description'])
                                     analysis['detection_method'] = 'opencv_hog + gemini'
@@ -914,10 +980,14 @@ def fast_continuous_video_processor(video_path, zone_id, stop_flag_dict):
                                             
                                         # Add image URL to each anomaly
                                         for anomaly in analysis['anomalies']:
-                                            anomaly['imageUrl'] = f"/uploads/{frame_filename}"
+                                            anomaly['image_url'] = f"http://localhost:5000/uploads/{frame_filename}"
+                                            anomaly['imageUrl'] = f"http://localhost:5000/uploads/{frame_filename}"  # Fallback
                                             anomaly['timestamp'] = analysis['timestamp']
                                             anomaly['zone_id'] = zone_id
-                                            anomaly['id'] = f"{zone_id}_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+                                            anomaly['location'] = CAMERA_ENDPOINTS.get(zone_id, {}).get('name', zone_id)
+                                            anomaly['status'] = 'active'
+                                            anomaly['severity'] = 'high' if anomaly.get('confidence', 0) > 85 else 'medium'
+                                            anomaly['id'] = str(uuid.uuid4())
                                             
                                             # Add to persistent storage
                                             PERSISTENT_ANOMALIES.append(anomaly.copy())
@@ -961,58 +1031,51 @@ def fast_continuous_video_processor(video_path, zone_id, stop_flag_dict):
 
 def continuous_video_processor(video_path, zone_id, stop_flag_dict):
     """
-    Continuously process video frames and send analysis to dashboard
+    LIVE Frame-by-Frame processor with Gemini AI
+    Analyzes frames every 3 seconds for truly real-time updates
     Runs in a background thread
     """
     try:
         import google.generativeai as genai
         
         # Load API Key
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            key_files = ["gemini_key.txt", "../gemini_key.txt", "backend/gemini_key.txt"]
-            for kf in key_files:
-                if os.path.exists(kf):
-                    try:
-                        with open(kf, "r") as f:
-                            possible_key = f.read().strip()
-                        if possible_key and "PASTE" not in possible_key:
-                            api_key = possible_key
-                            break
-                    except:
-                        pass
+        api_key = get_gemini_key()
         
         if not api_key or "PASTE" in api_key:
-            print(f"[{zone_id}] Gemini API Key not found. Stopping continuous analysis.")
+            safe_print(f"[{zone_id}] ❌ Gemini API Key not found. Stopping continuous analysis.")
             return
         
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('models/gemini-flash-latest')
+        model = genai.GenerativeModel('models/gemini-2.0-flash-exp')  # Latest fastest model
         
         # Open video file
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
-            print(f"[{zone_id}] Failed to open video: {video_path}")
+            safe_print(f"[{zone_id}] ❌ Failed to open video: {video_path}")
             return
         
         fps = cap.get(cv2.CAP_PROP_FPS) or 30
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        frame_interval = int(fps * 10)  # Analyze every 10 seconds
+        frame_interval = int(fps * 3)  # 🔥 Analyze every 3 seconds for LIVE updates
         
-        print(f"[{zone_id}] Starting continuous analysis: {total_frames} frames @ {fps} FPS")
-        print(f"[{zone_id}] Analyzing every {frame_interval} frames (~10 seconds)")
+        safe_print(f"[{zone_id}] 🎥 Starting LIVE frame-by-frame analysis:")
+        safe_print(f"[{zone_id}]    - Total frames: {total_frames} @ {fps} FPS")
+        safe_print(f"[{zone_id}]    - Update interval: {frame_interval} frames (~3 seconds)")
+        safe_print(f"[{zone_id}]    - AI Model: Gemini 2.0 Flash")
         
         frame_count = 0
         analysis_count = 0
+        loop_count = 0
         
         while not stop_flag_dict.get('stop', False):
             ret, frame = cap.read()
             
             if not ret:
-                # Loop back to beginning
+                # Loop back to beginning for continuous monitoring
                 cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                 frame_count = 0
-                print(f"[{zone_id}] Looping video...")
+                loop_count += 1
+                safe_print(f"[{zone_id}] 🔄 Looping video (Loop #{loop_count})...")
                 continue
             
             frame_count += 1
@@ -1024,50 +1087,85 @@ def continuous_video_processor(video_path, zone_id, stop_flag_dict):
                 timestamp_min = int(timestamp_sec // 60)
                 timestamp_sec_rem = int(timestamp_sec % 60)
                 
-                print(f"[{zone_id}] Analyzing frame {frame_count}/{total_frames} ({timestamp_min}:{timestamp_sec_rem:02d})")
+                safe_print(f"[{zone_id}] 📊 Analyzing frame {frame_count}/{total_frames} at {timestamp_min}:{timestamp_sec_rem:02d}")
                 
                 try:
-                    # Save frame temporarily
-                    temp_frame_path = os.path.join(app.config['UPLOAD_FOLDER'], f"temp_{zone_id}_frame.jpg")
-                    cv2.imwrite(temp_frame_path, frame)
+                    # Save frame with unique timestamp
+                    frame_filename = f"live_{zone_id}_{int(time.time())}_{uuid.uuid4().hex[:6]}.jpg"
+                    frame_path = os.path.join(app.config['UPLOAD_FOLDER'], frame_filename)
+                    cv2.imwrite(frame_path, frame)
                     
                     # Upload frame to Gemini
-                    frame_file = genai.upload_file(path=temp_frame_path)
+                    safe_print(f"[{zone_id}]    ⬆️  Uploading frame to Gemini AI...")
+                    frame_file = genai.upload_file(path=frame_path)
                     
                     # Wait for processing
+                    wait_count = 0
                     while frame_file.state.name == "PROCESSING":
-                        time.sleep(1)
+                        time.sleep(0.5)
+                        wait_count += 1
+                        if wait_count > 20:  # 10 second timeout
+                            safe_print(f"[{zone_id}]    ⚠️  Upload timeout")
+                            break
                         frame_file = genai.get_file(frame_file.name)
                     
                     if frame_file.state.name == "FAILED":
-                        print(f"[{zone_id}] Frame processing failed")
+                        safe_print(f"[{zone_id}]    ❌ Frame processing failed")
+                        if os.path.exists(frame_path):
+                            os.remove(frame_path)
                         continue
                     
-                    # Construct prompt
+                    # Construct enhanced prompt for live analysis
                     lost_persons_desc = ""
                     active_lost_persons = [p for p in LOST_PERSONS if p['status'] == 'active']
                     if active_lost_persons:
-                        lost_persons_desc = "Also, check if any of the following lost persons are present:\\n"
+                        lost_persons_desc = "LOST PERSONS TO FIND:\\n"
                         for p in active_lost_persons:
                             lost_persons_desc += f"- ID: {p['id']}, Name: {p['name']}, Age: {p['age']}, Description: {p['description']}\\n"
                     
                     prompt = f"""
-                    Analyze this CCTV frame for crowd management.
+                    🎥 LIVE CCTV FRAME ANALYSIS
+                    
+                    Analyze this security camera frame in REAL-TIME for crowd management.
+                    
                     {lost_persons_desc}
-                    Return a JSON object with:
-                    - crowd_count (integer): Estimated number of people.
-                    - density_level (string): "Low", "Medium", "High", or "Critical".
-                    - anomalies (list): List of anomalies with type, description, confidence (0-100).
-                    - found_persons (list): List of found lost persons (if any).
-                    - description (string): Brief summary.
-                    - sentiment (string): "Calm", "Agitated", "Panic", or "Happy".
+                    
+                    Return a JSON object with the following:
+                    
+                    {{
+                      "crowd_count": <integer - estimated number of people visible>,
+                      "density_level": "<Low/Medium/High/Critical>",
+                      "anomalies": [
+                        {{
+                          "type": "<fire/violence/suspicious_behavior/abandoned_object/medical_emergency/panic/weapon/etc>",
+                          "description": "<detailed description>",
+                          "confidence": <0-100>,
+                          "timestamp": "MM:SS",
+                          "severity": "<low/medium/high/critical>"
+                        }}
+                      ],
+                      "found_persons": [
+                        {{
+                          "person_id": "<ID from lost persons list>",
+                          "confidence": <0-100>,
+                          "description": "<where they are in frame>"
+                        }}
+                      ],
+                      "description": "<brief scene summary - what's happening right now>",
+                      "sentiment": "<Calm/Agitated/Panic/Happy>"
+                    }}
+                    
+                    Only report REAL security threats, not technical errors.
                     """
                     
-                    response = model.generate_content([frame_file, prompt], request_options={"timeout": 120})
+                    safe_print(f"[{zone_id}]    🤖 Requesting AI analysis...")
+                    response = model.generate_content([frame_file, prompt], request_options={"timeout": 60})
                     
                     # Parse response
                     text = response.text
                     match = re.search(r'```json\\n(.*?)\\n```', text, re.DOTALL)
+                    if not match:
+                        match = re.search(r'```\\n(.*?)\\n```', text, re.DOTALL)
                     if match:
                         json_str = match.group(1)
                     else:
@@ -1076,6 +1174,9 @@ def continuous_video_processor(video_path, zone_id, stop_flag_dict):
                     analysis = json.loads(json_str)
                     analysis['timestamp'] = datetime.utcnow().isoformat() + "Z"
                     analysis['video_timestamp'] = f"{timestamp_min}:{timestamp_sec_rem:02d}"
+                    analysis['frame_number'] = frame_count
+                    analysis['loop_number'] = loop_count
+                    analysis['detection_method'] = 'gemini_live'
                     
                     # Handle found persons
                     if 'found_persons' in analysis and analysis['found_persons']:
@@ -1083,6 +1184,7 @@ def continuous_video_processor(video_path, zone_id, stop_flag_dict):
                             match_person['zone_id'] = zone_id
                             match_person['found_at'] = datetime.utcnow().isoformat() + "Z"
                             FOUND_MATCHES.append(match_person)
+                            safe_print(f"[{zone_id}]    ✅ FOUND PERSON: {match_person.get('person_id')}")
                             
                             if match_person.get('confidence', 0) > 80:
                                 for p in LOST_PERSONS:
@@ -1091,33 +1193,65 @@ def continuous_video_processor(video_path, zone_id, stop_flag_dict):
                                         p['found_location'] = zone_id
                                         break
                     
+                    # Process anomalies
+                    has_real_anomalies = False
+                    if 'anomalies' in analysis and analysis['anomalies']:
+                        for anomaly in analysis['anomalies']:
+                            # Add metadata to anomaly
+                            anomaly['image_url'] = f"http://localhost:5000/uploads/{frame_filename}"
+                            anomaly['imageUrl'] = f"http://localhost:5000/uploads/{frame_filename}"
+                            anomaly['timestamp'] = analysis['timestamp']
+                            anomaly['zone_id'] = zone_id
+                            anomaly['location'] = CAMERA_ENDPOINTS.get(zone_id, {}).get('name', zone_id)
+                            anomaly['status'] = 'active'
+                            anomaly['severity'] = anomaly.get('severity', 'high' if anomaly.get('confidence', 0) > 85 else 'medium')
+                            anomaly['id'] = str(uuid.uuid4())
+                            
+                            # Store in persistent storage
+                            PERSISTENT_ANOMALIES.append(anomaly.copy())
+                            has_real_anomalies = True
+                            
+                            # Send alerts for high-confidence anomalies
+                            if anomaly.get('confidence', 0) > 70:
+                                safe_print(f"[{zone_id}]    🚨 ANOMALY: {anomaly.get('type')} - {anomaly.get('description')}")
+                                send_anomaly_alert(zone_id, anomaly.get('type', 'Unknown'), anomaly.get('description', 'No description'))
+                    
+                    # Delete frame if no anomalies
+                    if not has_real_anomalies and os.path.exists(frame_path):
+                        os.remove(frame_path)
+                    
                     # Update global analysis
                     ZONE_ANALYSIS[zone_id] = analysis
                     update_zone_history(zone_id, analysis)
                     
-                    # Send alerts for anomalies
-                    if 'anomalies' in analysis and analysis['anomalies']:
-                        for anomaly in analysis['anomalies']:
-                            if anomaly.get('confidence', 0) > 70:
-                                send_anomaly_alert(zone_id, anomaly.get('type', 'Unknown'), anomaly.get('description', 'No description'))
+                    safe_print(f"[{zone_id}]    ✅ Analysis #{analysis_count}: {analysis.get('crowd_count', 0)} people, {analysis.get('density_level', 'Unknown')} density, {len(analysis.get('anomalies', []))} anomalies")
                     
-                    print(f"[{zone_id}] Analysis #{analysis_count}: {analysis.get('crowd_count', 0)} people, {analysis.get('density_level', 'Unknown')} density")
-                    
-                    # Clean up temp file
-                    if os.path.exists(temp_frame_path):
-                        os.remove(temp_frame_path)
-                    
+                except json.JSONDecodeError as e:
+                    safe_print(f"[{zone_id}]    ⚠️  JSON parse error: {e}")
+                    # Fallback: create basic analysis
+                    ZONE_ANALYSIS[zone_id] = {
+                        'crowd_count': 0,
+                        'density_level': 'Unknown',
+                        'anomalies': [],
+                        'description': 'Analysis in progress...',
+                        'sentiment': 'Unknown',
+                        'timestamp': datetime.utcnow().isoformat() + "Z"
+                    }
                 except Exception as e:
-                    print(f"[{zone_id}] Frame analysis error: {e}")
+                    safe_print(f"[{zone_id}]    ❌ Frame analysis error: {e}")
+                    if 'frame_path' in locals() and os.path.exists(frame_path):
+                        os.remove(frame_path)
             
             # Small delay to prevent CPU overload
-            time.sleep(0.01)
+            time.sleep(0.001)
         
         cap.release()
-        print(f"[{zone_id}] Continuous analysis stopped")
+        safe_print(f"[{zone_id}] ⏹️  Live analysis stopped (Total analyses: {analysis_count})")
         
     except Exception as e:
-        print(f"[{zone_id}] Continuous processor error: {e}")
+        safe_print(f"[{zone_id}] ❌ CRITICAL ERROR: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 @app.route('/api/cameras/upload-video', methods=['POST'])
@@ -1244,11 +1378,7 @@ def upload_food_court_video():
     # Check if continuous mode is requested (default: True)
     continuous_mode = request.form.get('continuous', 'true').lower() == 'true'
     
-    # Initial analysis
-    analysis = analyze_video_with_gemini(save_path, 'food_court')
-    update_zone_history('food_court', analysis)
-    
-    # Start continuous processing if requested
+    # Start continuous processing immediately (non-blocking)
     if continuous_mode:
         with VIDEO_PROCESSING_LOCK:
             # Stop existing processor if any
@@ -1256,10 +1386,10 @@ def upload_food_court_video():
                 ACTIVE_VIDEO_PROCESSORS['food_court']['stop_flag']['stop'] = True
                 print("[food_court] Stopping previous continuous processor...")
             
-            # Start new processor
+            # Start new processor in background thread - LIVE GEMINI AI
             stop_flag = {'stop': False}
             thread = threading.Thread(
-                target=fast_continuous_video_processor,
+                target=continuous_video_processor,  # 🔥 Live frame-by-frame Gemini analysis
                 args=(save_path, 'food_court', stop_flag),
                 daemon=True
             )
@@ -1273,16 +1403,31 @@ def upload_food_court_video():
             }
             
             print(f"[food_court] Started continuous analysis for {filename}")
-    
-    return jsonify({
-        "message": "Food Court video analyzed successfully",
-        "zone": "Food Court",
-        "video_url": f"/uploads/food_court_{filename}",
-        "analysis": analysis,
-        "endpoint": CAMERA_ENDPOINTS['food_court'],
-        "continuous_mode": continuous_mode,
-        "status": "Processing continuously" if continuous_mode else "One-time analysis complete"
-    })
+        
+        # Return immediately - analysis will happen in background
+        return jsonify({
+            "message": "Food Court video uploaded. Analysis starting...",
+            "zone": "Food Court",
+            "video_url": f"/uploads/food_court_{filename}",
+            "analysis": None,  # Will be populated by continuous processor
+            "endpoint": CAMERA_ENDPOINTS['food_court'],
+            "continuous_mode": True,
+            "status": "Processing continuously - check /api/zones/food_court/density for live data"
+        })
+    else:
+        # One-time analysis (blocking)
+        analysis = analyze_video_with_gemini(save_path, 'food_court')
+        update_zone_history('food_court', analysis)
+        
+        return jsonify({
+            "message": "Food Court video analyzed successfully",
+            "zone": "Food Court",
+            "video_url": f"/uploads/food_court_{filename}",
+            "analysis": analysis,
+            "endpoint": CAMERA_ENDPOINTS['food_court'],
+            "continuous_mode": False,
+            "status": "One-time analysis complete"
+        })
 
 @app.route('/api/cameras/parking/upload', methods=['POST'])
 def upload_parking_video():
@@ -1324,7 +1469,7 @@ def upload_parking_video():
             if 'parking' in ACTIVE_VIDEO_PROCESSORS:
                 ACTIVE_VIDEO_PROCESSORS['parking']['stop_flag']['stop'] = True
             stop_flag = {'stop': False}
-            thread = threading.Thread(target=fast_continuous_video_processor, args=(save_path, 'parking', stop_flag), daemon=True)
+            thread = threading.Thread(target=continuous_video_processor, args=(save_path, 'parking', stop_flag), daemon=True)  # Live Gemini AI
             thread.start()
             ACTIVE_VIDEO_PROCESSORS['parking'] = {'thread': thread, 'stop_flag': stop_flag, 'video_path': save_path, 'started_at': datetime.utcnow().isoformat() + "Z"}
             print(f"[parking] Started continuous analysis for {filename}")
@@ -1379,7 +1524,7 @@ def upload_main_stage_video():
             if 'main_stage' in ACTIVE_VIDEO_PROCESSORS:
                 ACTIVE_VIDEO_PROCESSORS['main_stage']['stop_flag']['stop'] = True
             stop_flag = {'stop': False}
-            thread = threading.Thread(target=fast_continuous_video_processor, args=(save_path, 'main_stage', stop_flag), daemon=True)
+            thread = threading.Thread(target=continuous_video_processor, args=(save_path, 'main_stage', stop_flag), daemon=True)  # Live Gemini AI
             thread.start()
             ACTIVE_VIDEO_PROCESSORS['main_stage'] = {'thread': thread, 'stop_flag': stop_flag, 'video_path': save_path, 'started_at': datetime.utcnow().isoformat() + "Z"}
             print(f"[main_stage] Started continuous analysis for {filename}")
@@ -1434,7 +1579,7 @@ def upload_testing_video():
             if 'testing' in ACTIVE_VIDEO_PROCESSORS:
                 ACTIVE_VIDEO_PROCESSORS['testing']['stop_flag']['stop'] = True
             stop_flag = {'stop': False}
-            thread = threading.Thread(target=fast_continuous_video_processor, args=(save_path, 'testing', stop_flag), daemon=True)
+            thread = threading.Thread(target=continuous_video_processor, args=(save_path, 'testing', stop_flag), daemon=True)  # Live Gemini AI
             thread.start()
             ACTIVE_VIDEO_PROCESSORS['testing'] = {'thread': thread, 'stop_flag': stop_flag, 'video_path': save_path, 'started_at': datetime.utcnow().isoformat() + "Z"}
             print(f"[testing] Started continuous analysis for {filename}")
@@ -2170,56 +2315,69 @@ def trigger_fire_alert():
         'zone_id': 'testing',
         'status': 'active',
         'severity': 'critical',
-        'image_url': '/uploads/anomaly_testing_fire.jpg'
+        'image_url': 'http://localhost:5000/uploads/fire_incident.png'
     }
     
-    # Update zone analysis
+    now = datetime.utcnow()
+    
+    # Update zone analysis for testing (FIRE ZONE)
     ZONE_ANALYSIS['testing'] = {
-        'crowd_count': 35,
-        'density_level': 'Medium',
+        'crowd_count': 45,
+        'density_level': 'Critical',
         'anomalies': [fire_incident],
         'description': 'Fire emergency situation - building evacuation underway',
         'sentiment': 'Panic',
-        'timestamp': datetime.utcnow().isoformat() + 'Z'
+        'timestamp': now.isoformat() + 'Z'
     }
     
     # Add to persistent storage for responder dashboard
     PERSISTENT_ANOMALIES.append(fire_incident)
     
-    # Add to zone history for tracking
-    ZONE_HISTORY['testing'].append({
-        'crowd_count': 35,
-        'density_level': 'Medium',
-        'timestamp': datetime.utcnow().isoformat() + 'Z'
-    })
+    # Add testing zone history (T-10m, T-5m, Now)
+    if 'testing' not in ZONE_HISTORY:
+        ZONE_HISTORY['testing'] = []
+    ZONE_HISTORY['testing'].append({'timestamp': (now - timedelta(minutes=10)).isoformat() + 'Z', 'crowd_count': 20})
+    ZONE_HISTORY['testing'].append({'timestamp': (now - timedelta(minutes=5)).isoformat() + 'Z', 'crowd_count': 35})
+    ZONE_HISTORY['testing'].append({'timestamp': now.isoformat() + 'Z', 'crowd_count': 45})
     
     # Populate other zones with normal data
-    ZONE_ANALYSIS['parking'] = {
-        'crowd_count': 12,
-        'density_level': 'Low',
-        'anomalies': [],
-        'description': 'Parking lot with light vehicle traffic',
-        'sentiment': 'Calm',
-        'timestamp': datetime.utcnow().isoformat() + 'Z'
+    zones_data = {
+        'parking': {
+            'crowd_count': 12,
+            'density_level': 'Low',
+            'anomalies': [],
+            'description': 'Parking lot with light vehicle traffic',
+            'sentiment': 'Calm',
+        },
+        'main_stage': {
+            'crowd_count': 450,
+            'density_level': 'Critical',
+            'anomalies': [],
+            'description': 'Concert event with large crowd near stage',
+            'sentiment': 'Agitated',
+        },
+        'food_court': {
+            'crowd_count': 78,
+            'density_level': 'Medium',
+            'anomalies': [],
+            'description': 'Shopping mall food court with moderate crowd',
+            'sentiment': 'Calm',
+        }
     }
     
-    ZONE_ANALYSIS['main_stage'] = {
-        'crowd_count': 450,
-        'density_level': 'Critical',
-        'anomalies': [],
-        'description': 'Concert event with large crowd near stage',
-        'sentiment': 'Agitated',
-        'timestamp': datetime.utcnow().isoformat() + 'Z'
-    }
-    
-    ZONE_ANALYSIS['food_court'] = {
-        'crowd_count': 78,
-        'density_level': 'Medium',
-        'anomalies': [],
-        'description': 'Shopping mall food court with moderate crowd',
-        'sentiment': 'Calm',
-        'timestamp': datetime.utcnow().isoformat() + 'Z'
-    }
+    # Update analysis and history for all zones
+    for zone_id, data in zones_data.items():
+        data['timestamp'] = now.isoformat() + 'Z'
+        ZONE_ANALYSIS[zone_id] = data
+        
+        # Add historical data for predictions (T-10m, T-5m, Now)
+        if zone_id not in ZONE_HISTORY:
+            ZONE_HISTORY[zone_id] = []
+        
+        current_count = data['crowd_count']
+        ZONE_HISTORY[zone_id].append({'timestamp': (now - timedelta(minutes=10)).isoformat() + 'Z', 'crowd_count': max(0, current_count - 10)})
+        ZONE_HISTORY[zone_id].append({'timestamp': (now - timedelta(minutes=5)).isoformat() + 'Z', 'crowd_count': max(0, current_count - 5)})
+        ZONE_HISTORY[zone_id].append({'timestamp': now.isoformat() + 'Z', 'crowd_count': current_count})
     
     return jsonify({
         'status': 'emergency_activated',

@@ -50,7 +50,7 @@ const responderTypes = {
 
 export default function ResponderDashboard() {
   const searchParams = useSearchParams()
-  const responderType = (searchParams.get("type") as keyof typeof mockIncidents) || "medical"
+  const responderType = (searchParams.get("type") as keyof typeof responderTypes) || "medical"
   const [selectedIncident, setSelectedIncident] = useState<string | null>(null)
   const [responderStatus, setResponderStatus] = useState("available")
   const [currentLocationName, setCurrentLocationName] = useState("Entrance") // For display
@@ -97,7 +97,8 @@ export default function ResponderDashboard() {
           timeReported: new Date(a.timestamp || Date.now()).toLocaleTimeString(),
           estimatedTime: "Unknown",
           distance: "Unknown",
-          assignedTo: null
+          assignedTo: null,
+          image_url: a.image_url || null
         }))
         setIncidents(formatted)
       }
@@ -192,12 +193,14 @@ export default function ResponderDashboard() {
     handleClaimIncident(incident.id)
     setIsNavigating(true)
 
-    const targetName = incident.zone === "main-stage" ? "Main Stage" :
-      incident.zone === "food-court" ? "Food Court" :
-        incident.zone === "entrance-b" ? "Entrance" :
-          incident.zone === "parking-c" ? "Parking" :
-            incident.zone === "backstage" ? "Backstage" :
-              incident.zone === "control-room" ? "Control Room" : "Main Stage"
+    const targetName = incident.zone === "testing" ? "Testing Region" :
+      incident.zone === "main-stage" ? "Main Stage" :
+        incident.zone === "food-court" ? "Food Court" :
+          incident.zone === "entrance-b" ? "Entrance" :
+            incident.zone === "parking-c" ? "Parking" :
+              incident.zone === "parking" ? "Parking" :
+                incident.zone === "backstage" ? "Backstage" :
+                  incident.zone === "control-room" ? "Control Room" : "Testing Region"
 
     setTargetLocationName(targetName)
 
@@ -231,17 +234,18 @@ export default function ResponderDashboard() {
 
         console.log("📍 Backend Response:", data)
 
-        // Updated coordinates matching backend (spread across ~3km)
+        // Realistic venue coordinates (within 500m radius - typical large venue)
         const NODE_COORDS: Record<string, [number, number]> = {
           "Entrance": [12.9716, 77.5946],
-          "Security Gate": [12.9750, 77.5970],
-          "Main Stage": [12.9850, 77.6050],
-          "Food Court": [12.9780, 77.5980], // Avoid zone
-          "Parking": [12.9650, 77.5900],
-          "Medical Bay": [12.9800, 77.6000],
-          "Backstage": [12.9920, 77.6100],
-          "VIP Area": [12.9880, 77.6070],
-          "Control Room": [12.9950, 77.6120]
+          "Security Gate": [12.9726, 77.5951],       // 130m from Entrance
+          "Main Stage": [12.9741, 77.5961],          // 300m from Entrance  
+          "Food Court": [12.9731, 77.5956],          // 200m from Entrance (avoid zone)
+          "Parking": [12.9706, 77.5941],             // 150m from Entrance
+          "Medical Bay": [12.9736, 77.5956],         // 250m from Entrance
+          "Testing Region": [12.9746, 77.5951],      // 350m from Entrance (FIRE LOCATION)
+          "Backstage": [12.9751, 77.5966],           // 450m from Entrance
+          "VIP Area": [12.9746, 77.5961],            // 370m from Entrance
+          "Control Room": [12.9721, 77.5946]         // 60m from Entrance
         }
 
         const pathCoords = data.path_nodes.map((node: string) => NODE_COORDS[node] || [12.9716, 77.5946])
@@ -250,35 +254,38 @@ export default function ResponderDashboard() {
         console.log("📌 Path Coordinates:", pathCoords)
         console.log("🔴 Avoid Zones:", avoidZonesList)
 
+        // Update all navigation state
         setNavigationPath(pathCoords)
         setTargetLocationCoords(NODE_COORDS[targetName])
-        setInstructions(data.instructions)
+        setInstructions(data.instructions || [])
 
-        // Enable voice FIRST and speak immediately
+        // Force current location to start node (Entrance)
+        const startCoords = NODE_COORDS["Entrance"]
+        setCurrentLocationCoords(startCoords)
+
+        // Calculate distance using backend data OR calculate from coordinates
+        const totalDistance = data.total_distance_meters || calculateDistance(
+          startCoords[0], startCoords[1],
+          NODE_COORDS[targetName][0], NODE_COORDS[targetName][1]
+        )
+
+        setDistanceToTarget(totalDistance) // Store in meters
+
+        const timeInMinutes = data.estimated_time_minutes || Math.round((totalDistance / 1000 / 5) * 60)
+        setEstimatedTime(timeInMinutes < 1 ? "< 1 min" : `${timeInMinutes} min`)
+
+        // Enable voice and speak immediately
         if (data.voice_instructions && data.voice_instructions.length > 0) {
           setVoiceInstructions(data.voice_instructions)
           setVoiceEnabled(true)
-          // Speak immediately (reduced delay)
-          setTimeout(() => {
-            speak(data.voice_instructions[0])
-            console.log("🔊 Speaking:", data.voice_instructions[0])
-          }, 300)
+
+          // Speak the first instruction immediately
+          console.log("🔊 Speaking navigation instruction:", data.voice_instructions[0])
+          speak(data.voice_instructions[0], true)
         }
 
-        // Enable GPS tracking
-        setEnableGPSTracking(true)
-
-        // Calculate initial distance
-        const initialDistance = calculateDistance(
-          currentLocationCoords[0], currentLocationCoords[1],
-          NODE_COORDS[targetName][0], NODE_COORDS[targetName][1]
-        )
-        setDistanceToTarget(initialDistance)
-        const timeInMinutes = Math.round((initialDistance / 5) * 60)
-        setEstimatedTime(timeInMinutes < 1 ? "< 1 min" : `${timeInMinutes} min`)
-
-        toast.success("Route calculated. GPS & Voice navigation enabled.", {
-          description: "Please allow location access if prompted by your browser."
+        toast.success(`Route calculated: ${(totalDistance / 1000).toFixed(1)}km to ${targetName}`, {
+          description: `ETA: ${timeInMinutes} min. Voice navigation active.`
         })
       } else {
         toast.error("Failed to calculate path.")
@@ -337,7 +344,7 @@ export default function ResponderDashboard() {
                 <div className="flex items-center space-x-4 text-sm font-medium">
                   <div className="flex items-center space-x-1">
                     <span className="text-muted-foreground">Distance:</span>
-                    <span className="text-primary">{(distanceToTarget * 1000).toFixed(0)}m</span>
+                    <span className="text-primary">{distanceToTarget.toFixed(0)}m</span>
                   </div>
                   <div className="flex items-center space-x-1">
                     <span className="text-muted-foreground">ETA:</span>
@@ -367,7 +374,7 @@ export default function ResponderDashboard() {
                     <div className="space-y-2 text-sm">
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Distance:</span>
-                        <span className="font-medium">{(distanceToTarget * 1000).toFixed(0)} meters</span>
+                        <span className="font-medium">{distanceToTarget.toFixed(0)} meters</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">ETA:</span>
@@ -608,6 +615,18 @@ export default function ResponderDashboard() {
                             <div className="md:col-span-2">
                               <Label className="text-sm font-medium">Description</Label>
                               <p className="text-sm mt-1">{incident.description}</p>
+                              {incident.image_url && (
+                                <div className="mt-4">
+                                  <Label className="text-sm font-medium mb-2 block">Incident Evidence</Label>
+                                  <div className="relative aspect-video w-full overflow-hidden rounded-lg border">
+                                    <img
+                                      src={incident.image_url}
+                                      alt="Incident Evidence"
+                                      className="object-cover w-full h-full"
+                                    />
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           </div>
                         )

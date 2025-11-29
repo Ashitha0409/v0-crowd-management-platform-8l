@@ -143,7 +143,7 @@ export default function VenueMap({
         <div className="w-full h-[400px] rounded-lg overflow-hidden border border-slate-700 relative z-0">
             <MapContainer
                 center={center}
-                zoom={14}
+                zoom={16}
                 scrollWheelZoom={true}
                 style={{ height: "100%", width: "100%" }}
                 zoomControl={true}

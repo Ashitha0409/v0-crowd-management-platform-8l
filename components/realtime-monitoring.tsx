@@ -115,7 +115,7 @@ export function RealtimeMonitoring() {
     }, [selectedZone])
 
     useEffect(() => {
-        // Auto-refresh every 30 seconds
+        // Auto-refresh every 3 seconds for real-time updates
         if (autoRefresh) {
             const interval = setInterval(() => {
                 fetchAllZonesData()
@@ -123,7 +123,7 @@ export function RealtimeMonitoring() {
                 if (selectedZone) {
                     fetchZoneHistory(selectedZone)
                 }
-            }, 30000)
+            }, 3000) // 3 seconds - matches video analysis frequency
 
             return () => clearInterval(interval)
         }

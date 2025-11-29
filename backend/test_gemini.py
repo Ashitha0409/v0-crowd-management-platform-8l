@@ -1,30 +1,21 @@
 import os
-import google.generativeai as genai
+import sys
 
 try:
-    # Load API Key
-    if os.path.exists("gemini_key.txt"):
-        with open("gemini_key.txt", "r") as f:
-            api_key = f.read().strip()
-        print(f"Loaded key: {api_key[:5]}...{api_key[-5:]}")
-    else:
-        print("gemini_key.txt not found")
-        exit(1)
+    import google.generativeai as genai
+    print("Library imported successfully.")
+except ImportError:
+    print("Library google.generativeai NOT installed.")
+    sys.exit(1)
 
-    genai.configure(api_key=api_key)
-    
-    # List models to verify connection
-    print("Listing models...")
-    for m in genai.list_models():
-        if 'generateContent' in m.supported_generation_methods:
-            print(m.name)
-            
-    # Try a simple generation
-    print("\nTesting generation with models/gemini-1.5-flash-latest...")
-    model = genai.GenerativeModel('models/gemini-1.5-flash-latest')
+key = "AIzaSyBdtYLpUucxwys-2KIHELwKT6OQPb7VWL0"
+print(f"Testing key: {key[:5]}...")
+
+try:
+    genai.configure(api_key=key)
+    model = genai.GenerativeModel('gemini-pro')
     response = model.generate_content("Hello, are you working?")
-    print(f"Response: {response.text}")
-    print("SUCCESS: Gemini API is working.")
-
+    print("API Call Successful!")
+    print(response.text)
 except Exception as e:
-    print(f"\nERROR: {e}")
+    print(f"API Call Failed: {e}")
